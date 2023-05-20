@@ -1,0 +1,35 @@
+{
+  "name": "react-native-mosquitodb",
+  "version": "0.0.1",
+  "description": "React native javascript sdk for mosquitodb",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deflexable/react-native-mosquitodb.git"
+  },
+  "keywords": [
+    "mosquitodb",
+    "javascript",
+    "selfhosted",
+    "serverless",
+    "Baas",
+    "database",
+    "react-native"
+  ],
+  "author": "Anthony Onabanjo <deflexable@gmail.com> (https://github.com/deflexable)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/deflexable/react-native-mosquitodb/issues"
+  },
+  "homepage": "https://github.com/deflexable/react-native-mosquitodb#readme",
+  "dependencies": {
+    "@types/lodash": "^4.14.194",
+    "lodash": "^4.17.21"
+  },
+  "engines": {
+    "node": ">= 16.0.0"
+  }
+}
