@@ -99,7 +99,7 @@ export class MosquitoDbStorage {
         }
     }
 
-    uploadFile = async (file = '', destination = '', onComplete, onProgress) => {
+    uploadFile(file = '', destination = '', onComplete, onProgress) {
         if (!file?.trim() || typeof file !== 'string') {
             onComplete?.({ error: 'file_path_invalid', message: `file is required in uploadFile()` });
             return;

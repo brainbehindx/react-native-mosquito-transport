@@ -89,7 +89,7 @@ export class MosquitoDbAuth {
     forceRefreshToken = () => initTokenRefresher(this.builder, true);
 }
 
-const doCustomSignin = async (builder, email, password, that) => {
+const doCustomSignin = (builder, email, password, that) => new Promise(async (resolve, reject) => {
     const { projectUrl, accessKey } = builder;
 
     try {
@@ -97,14 +97,14 @@ const doCustomSignin = async (builder, email, password, that) => {
             _: `${btoa(email)}</>${btoa(password)}`
         }, accessKey))).json();
         if (r.simpleError) throw r;
+        resolve({ user: await that.getAuth(), token: r.result.token });
         await injectFreshToken(projectUrl, r.result);
-        return { user: await that.getAuth(), token: r.result.token };
     } catch (e) {
-        throw e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` };
+        reject(e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` });
     }
-}
+});
 
-const doCustomSignup = async (builder, email, password, name, metadata, that) => {
+const doCustomSignup = (builder, email, password, name, metadata, that) => new Promise(async (resolve, reject) => {
     const { projectUrl, accessKey } = builder;
 
     try {
@@ -113,12 +113,12 @@ const doCustomSignup = async (builder, email, password, name, metadata, that) =>
             metadata
         }, accessKey))).json();
         if (r.simpleError) throw r;
+        resolve({ user: await that.getAuth(), token: r.result.token });
         await injectFreshToken(projectUrl, r.result);
-        return { user: await that.getAuth(), token: r.result.token };
     } catch (e) {
-        throw e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` };
+        reject(e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` });
     }
-}
+});
 
 export const doSignOut = async (builder) => {
     await awaitStore();
@@ -147,7 +147,7 @@ export const doSignOut = async (builder) => {
     }
 }
 
-const doGoogleSignin = async (builder, token, that) => {
+const doGoogleSignin = (builder, token, that) => new Promise(async (resolve, reject) => {
     const { projectUrl, accessKey } = builder;
 
     try {
@@ -155,12 +155,12 @@ const doGoogleSignin = async (builder, token, that) => {
             _: token
         }, accessKey))).json();
         if (r.simpleError) throw r;
+        resolve({ user: await that.getAuth(), token: r.result.token });
         await injectFreshToken(projectUrl, r.result);
-        return { user: await that.getAuth(), token: r.result.token };
     } catch (e) {
-        throw e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` };
+        reject(e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` });
     }
-}
+});
 
 const doAppleSignin = async () => {
 

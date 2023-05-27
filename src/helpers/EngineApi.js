@@ -19,7 +19,9 @@ const apis = {
     _uploadFile: (baseApi) => `${baseApi}/_uploadFile`,
     _deleteFile: (baseApi) => `${baseApi}/_deleteFile`,
     _deleteFolder: (baseApi) => `${baseApi}/_deleteFolder`,
-    staticStorage: (baseApi) => `${baseApi}/storage`
+    staticStorage: (baseApi) => `${baseApi}/storage`,
+    _documentCount: (baseApi) => `${baseApi}/_documentCount`,
+    _areYouOk: (baseApi) => `${baseApi}/_areYouOk`
 }
 
 export default { ...apis };

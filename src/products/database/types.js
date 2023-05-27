@@ -1,6 +1,6 @@
 
 export const TIMESTAMP = (time) => {
-    if (typeof time !== 'number' || time < 0) throw 'Invalid value supplied to TIMESTAMP, expected a positive number';
+    if (time && (typeof time !== 'number' || time < 0)) throw 'Invalid value supplied to TIMESTAMP, expected a positive number';
     return ({ $timestamp: time || "now" });
 };
 

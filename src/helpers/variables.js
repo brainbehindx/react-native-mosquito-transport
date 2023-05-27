@@ -13,8 +13,7 @@ export const CacheStore = {
     DatabaseStore: {},
     DatabaseRecords: {},
     AuthStore: {},
-    PendingWrites: {},
-    AuthStore: {}
+    PendingWrites: {}
 }
 
 export const CacheConstant = { ...CacheStore };

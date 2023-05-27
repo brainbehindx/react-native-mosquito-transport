@@ -2,84 +2,75 @@
 export default class GlobalListener {
     constructor(initialValue) {
         this.listener = {};
-        this.lastTriggerValue = initialValue || null;
+        this.listenerMap = {};
 
+        this.lastTriggerValue = initialValue || null;
         this.lastTriggerValueMap = {};
+
         this.lastListenerKey = 1;
     }
 
-    setlastTriggerValue(value) {
-        this.lastTriggerValue = value;
-    }
-
     startListener(callback, useLastTriggerValue = false) {
-        let key = `${++this.lastListenerKey}`;
+        const key = `${++this.lastListenerKey}`;
+        let hasCancelled;
 
-        if (typeof key !== 'string' || typeof callback !== 'function' || typeof useLastTriggerValue !== 'boolean') throw 'Invalid param was parsed to startListener';
-
-        if (this.listener[key])
-            this.cancelListener(key);
-
+        if ((callback && typeof callback !== 'function') || typeof useLastTriggerValue !== 'boolean') throw 'Invalid param was parsed to startListener';
         this.listener[key] = callback;
 
         if (useLastTriggerValue)
             setTimeout(() => {
-                if (this.listener[key]) this.listener[key](...(this.lastTriggerValue || []));
-            }, 3);
+                if (!hasCancelled) callback?.(...(this.lastTriggerValue || []));
+            }, 1);
 
         return () => {
-            this.cancelListener(key);
+            if (!hasCancelled) delete this.listener[key];
+            hasCancelled = true;
         }
     }
 
     startKeyListener(key, callback, useLastTriggerValue = false) {
-        if (typeof key !== 'string' || typeof callback !== 'function' || typeof useLastTriggerValue !== 'boolean') throw 'Invalid param was parsed to startListener';
+        if ((callback && typeof callback !== 'function') || typeof useLastTriggerValue !== 'boolean') throw 'Invalid param was parsed to startListener';
 
-        if (this.listener[key])
-            this.cancelListener(key);
+        if (!this.listenerMap[key]) this.listenerMap[key] = { ite: 0, triggers: {} };
+        const node = `${++this.listenerMap[key].ite}`;
+        let hasCancelled;
 
-        this.listener[key] = callback;
+        this.listenerMap[key] = this.listenerMap[key].triggers[node] = callback;
 
         if (useLastTriggerValue)
-            this.listener[key](...(this.lastTriggerValueMap[key] || []));
-    }
+            setTimeout(() => {
+                if (!hasCancelled) callback?.(...(this.lastTriggerValueMap[key] || []));
+            }, 1);
 
-    cancelListener(ref) {
-        if (typeof ref !== 'string') throw 'Invalid param was parsed to cancelListener';
-        try {
-            if (this.listener[ref])
-                delete this.listener[ref];
-        } catch (e) {
-            console.error(`Unable to cancel global listener with ref "${ref}"`);
+        return () => {
+            if (!hasCancelled) {
+                delete this.listenerMap[key].triggers[node];
+                if (!Object.keys(this.listenerMap[key].triggers).length) delete this.listenerMap[key];
+            }
+            hasCancelled = true;
         }
     }
 
     triggerListener() {
         const param = [...(arguments || [])];
 
-        // console.log('triggering ', param, ' &listener =', this.listener);
         Object.keys(this.listener || {}).forEach(key => {
-            this.listener[key](...param);
+            this.listener[key]?.(...param);
         });
         this.lastTriggerValue = param;
     }
 
     triggerKeyListener() {
-        // console.log('insider triggerKeyListener =', arguments);
-
-        const param = [...(arguments || [])],  // un mutate reference to argument
+        const param = [...(arguments || [])],
             key = param[0],
-            value = param.filter((v, i) => i);
+            value = param.filter((_, i) => i);
 
-        if (!key) throw 'a key must be provided to GlobalListener triggerKeyListener';
+        if (!key) throw 'expected a key in triggerKeyListener() first argument';
 
-        // console.log('triggering ', param, ' &listener =', this.listener);
-
-        if (this.listener[key]) {
-            this.listener[key](...value);
-        } // else console.warn(`no listener found for "${param[0]}"`);
+        Object.keys(this.listenerMap[key]?.triggers || {}).forEach(e => {
+            this.listenerMap[key]?.triggers[e]?.(...value);
+        });
 
         this.lastTriggerValueMap[key] = value;
-        // console.log('triggerKeyListener finish');
     }
 }

@@ -5,7 +5,7 @@ import { CacheStore, Scoped } from "../../helpers/variables";
 import { IS_TIMESTAMP } from "./types";
 import { confirmFilterDoc } from "./validator";
 
-export const insertRecord = async (projectUrl, dbUrl, dbName, accessId) => {
+export const insertRecord = async (projectUrl, dbUrl, dbName, collection, accessId, query, value) => {
     await awaitStore();
     if (!CacheStore.DatabaseRecords[projectUrl])
         CacheStore.DatabaseRecords[projectUrl] = {};
@@ -16,7 +16,10 @@ export const insertRecord = async (projectUrl, dbUrl, dbName, accessId) => {
     if (!CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName])
         CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName] = {};
 
-    CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName][accessId] = true;
+    if (!CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName][collection])
+        CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName][collection] = {};
+
+    CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName][collection][accessId] = { value, query };
     updateCacheStore();
 }
 
@@ -27,9 +30,16 @@ export const deleteRecord = async (projectUrl, dbUrl, dbName, accessId) => {
     updateCacheStore();
 }
 
-export const getRecord = async (projectUrl, dbUrl, dbName, accessId) => {
+export const getRecord = async (projectUrl, dbUrl, dbName, path, accessId) => {
     await awaitStore();
-    return CacheStore.DatabaseRecords[projectUrl]?.[dbUrl]?.[dbName]?.[accessId];
+    return CacheStore.DatabaseRecords[projectUrl]?.[dbUrl]?.[dbName]?.[path]?.[accessId];
+}
+
+export const generateRecordID = (builder, config) => {
+    const { find, findOne, sort, direction, limit, path, countDoc } = builder,
+        accessId = `collection:${path}->excludes:${(config?.excludeFields || []).join(',')}->includes:${(config?.returnOnly || []).join(',')}->${countDoc ? 'countDoc:yes->' : ''}sort:${sort || ''}->direction:${direction}->limit:${limit || ''}->${findOne ? 'findOne' : 'find'}:${queryEntries(findOne || find || {}).sort().join(',')}`;
+
+    return accessId;
 }
 
 export const transformCollectionPath = (path = '') => `${path.split('/').join('.')}.$$collection$$`;

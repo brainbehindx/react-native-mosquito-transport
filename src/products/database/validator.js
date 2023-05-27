@@ -10,7 +10,15 @@ export const validateReadOptions = () => {
 }
 
 export const validateReadConfig = (config) => {
-
+    if (config) {
+        if (!IS_RAW_OBJECT(config)) throw `Invalid value assigned to 'config', expected a raw object`;
+        Object.keys(config).forEach(e => {
+            if (e === 'excludeFields' || e === 'returnOnly') {
+                if (typeof config[e] !== 'string' && !Array.isArray(config[e]))
+                    throw `invalid value supplied to ${e}, expected either a string or array of string`;
+            } else throw `unexpected property '${e}' found in config`;
+        });
+    }
 }
 
 const FOREIGN_DOC_PROPS = ['_id', 'collection', 'find'];
@@ -56,12 +64,11 @@ export const validateRawWriteValue = (value) => {
 export const validateFilter = (filter = {}) => evaluateFilter({}, filter);
 
 export const validateCollectionPath = (path) => {
-    if (typeof path !== 'string' || path.includes('.')) throw `invalid collection path "${path}", string mustn't contain "."`;
+    if (typeof path !== 'string' || path.includes('.') || !path.trim()) throw `invalid collection path "${path}", expected non-empty string and mustn't contain "."`;
 }
 
 export const validateDocumentId = (id) => {
-    if (typeof id !== 'number' && typeof id !== 'string')
-        throw `invalid document _id "${id}, expected a string or number but got ${typeof id}`;
+    if (!id) throw `_id is required`;
 };
 
 export const confirmFilterDoc = (data, filter) => {

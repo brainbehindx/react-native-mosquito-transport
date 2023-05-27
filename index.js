@@ -8,6 +8,7 @@ import { encode, decode } from 'base-64';
 import { AuthListener, AuthTokenListener, TokenRefreshListener } from "./src/helpers/listeners";
 import GlobalListener from "./src/helpers/GlobalListener";
 import { initTokenRefresher, triggerAuth, triggerAuthToken } from "./src/products/auth/accessor";
+import { FIELD_DELETION, INCREMENT, TIMESTAMP } from "./src/products/database/types";
 
 globalThis.btoa = encode;
 globalThis.atob = decode;
@@ -93,6 +94,13 @@ const validateMosquitoDbConfig = (config) => {
 
     if (!config['projectUrl']) throw 'projectUrl is a required property in MosquitoDb() constructor';
     if (!config['accessKey']) throw 'accessKey is a required property in MosquitoDb() constructor';
+}
+
+export {
+    FIELD_DELETION,
+    INCREMENT,
+    TIMESTAMP,
+    listenConnection
 }
 
 export default RNMosquitoDb;

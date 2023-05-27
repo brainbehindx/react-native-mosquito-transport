@@ -1,4 +1,5 @@
 import { addEventListener } from "@react-native-community/netinfo";
+import { Scoped } from "./variables";
 
 export const everyEntrie = (obj, callback) => {
     if (typeof obj !== 'object' || Array.isArray(obj)) return;
@@ -41,9 +42,24 @@ export const queryEntries = (obj, lastPath = '', exceptions = []) => {
 }
 
 export const listenConnection = (callback) => {
-    return addEventListener(s => {
-        callback(s.isInternetReachable);
+    let hasAttached, hasCancelled;
+
+    const listener = addEventListener(s => {
+        if (hasAttached) {
+            callback?.(s.isInternetReachable);
+        } else
+            setTimeout(() => {
+                if (hasCancelled) {
+                    listener();
+                } else callback?.(s.isInternetReachable);
+                hasAttached = true;
+            }, 1);
     });
+
+    return () => {
+        if (hasAttached) listener();
+        hasCancelled = true;
+    }
 }
 
 export const prefixStoragePath = (path, prefix = 'file:///') => {

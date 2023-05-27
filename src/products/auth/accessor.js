@@ -55,10 +55,12 @@ export const initTokenRefresher = async (config, forceRefresh) => {
                 rizz();
             }, l.expOn - Date.now() - 60000);
         }
-    } else if (forceRefresh)
+    } else if (forceRefresh) {
+        TokenRefreshListener[projectUrl].triggerListener('ready');
         return Promise.reject(
             simplifyError('no_token_yet', 'No token is available to initiate a refresh').simpleError
         );
+    }
 }
 
 export const refreshToken = async (projectUrl, accessKey, processRef, remainRetries = 7, initialRetries = 7) => {
