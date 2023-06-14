@@ -1,39 +1,51 @@
-import { listenConnection } from "./src/helpers/peripherals";
+import { listenReachableServer } from "./src/helpers/peripherals";
 import { releaseCacheStore } from "./src/helpers/utils";
 import { Scoped } from "./src/helpers/variables";
 import { MosquitoDbAuth } from "./src/products/auth";
 import { MosquitoDbCollection } from "./src/products/database";
 import { MosquitoDbStorage } from "./src/products/storage";
 import { encode, decode } from 'base-64';
-import { AuthListener, AuthTokenListener, TokenRefreshListener } from "./src/helpers/listeners";
-import GlobalListener from "./src/helpers/GlobalListener";
+import { InitializedProject, ServerReachableListener } from "./src/helpers/listeners";
 import { initTokenRefresher, triggerAuth, triggerAuthToken } from "./src/products/auth/accessor";
 import { FIELD_DELETION, INCREMENT, TIMESTAMP } from "./src/products/database/types";
+import { mfetch } from "./src/products/http_callable";
+import { io } from "socket.io-client";
 
 globalThis.btoa = encode;
 globalThis.atob = decode;
 
 releaseCacheStore();
 
-listenConnection(c => {
-    Scoped.IS_CONNECTED = c;
-});
-
 class RNMosquitoDb {
     constructor(config) {
         validateMosquitoDbConfig(config);
-        this.config = config;
+        this.config = {
+            ...config,
+            apiUrl: config.projectUrl,
+            projectUrl: config.projectUrl.split('/').filter((_, i, a) => i !== a.length - 1).join('/')
+        };
 
-        const { projectUrl } = config;
+        const { projectUrl } = this.config;
 
-        if (!AuthListener[projectUrl]) {
-            AuthListener[projectUrl] = new GlobalListener('loading');
-            AuthTokenListener[projectUrl] = new GlobalListener('loading');
-            TokenRefreshListener[projectUrl] = new GlobalListener();
+        if (!InitializedProject[projectUrl]) {
+            InitializedProject[projectUrl] = true;
             Scoped.LastTokenRefreshRef[projectUrl] = 0;
             triggerAuth(projectUrl);
             triggerAuthToken(projectUrl);
-            initTokenRefresher({ ...config }, true);
+            initTokenRefresher({ ...this.config }, true);
+
+            const socket = io(`ws://${projectUrl.split('://')[1]}`);
+
+            socket.on('connect', () => {
+                ServerReachableListener.triggerKeyListener(projectUrl, true);
+            });
+            socket.on('disconnect', () => {
+                ServerReachableListener.triggerKeyListener(projectUrl, false);
+            });
+
+            listenReachableServer(c => {
+                Scoped.IS_CONNECTED[projectUrl] = c;
+            }, projectUrl);
         }
     }
 
@@ -45,9 +57,11 @@ class RNMosquitoDb {
             ...(dbUrl ? { dbUrl } : {})
         })
     });
-    collection = (path) => new MosquitoDbCollection({ ...this.config, path })
-    auth = () => new MosquitoDbAuth({ ...this.config })
-    storage = () => new MosquitoDbStorage({ ...this.config })
+    collection = (path) => new MosquitoDbCollection({ ...this.config, path });
+    auth = () => new MosquitoDbAuth({ ...this.config });
+    storage = () => new MosquitoDbStorage({ ...this.config });
+    fetchHttp = (endpoint, init) => mfetch(endpoint, init, { ...this.config });
+    listenReachableServer = (callback) => listenReachableServer(callback, this.config.projectUrl);
 }
 
 const validator = {
@@ -99,8 +113,7 @@ const validateMosquitoDbConfig = (config) => {
 export {
     FIELD_DELETION,
     INCREMENT,
-    TIMESTAMP,
-    listenConnection
+    TIMESTAMP
 }
 
 export default RNMosquitoDb;

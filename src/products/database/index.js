@@ -2,12 +2,12 @@ import _ from "lodash";
 import { io } from "socket.io-client";
 import EngineApi from "../../helpers/EngineApi";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
-import { IS_WHOLE_NUMBER, listenConnection } from "../../helpers/peripherals";
-import { buildFetchInterface, simplifyError } from "../../helpers/utils";
+import { IS_WHOLE_NUMBER, listenReachableServer } from "../../helpers/peripherals";
+import { awaitStore, buildFetchInterface, simplifyError } from "../../helpers/utils";
 import { Scoped } from "../../helpers/variables";
 import { accessData, addPendingWrites, commitStore, generateRecordID, getRecord, insertRecord, removePendingWrite, updateDatabaseStore } from "./accessor";
 import { validateFilter, validateReadConfig, validateWriteValue } from "./validator";
-import { awaitRefreshToken } from "../auth/accessor";
+import { awaitRefreshToken, listenToken } from "../auth/accessor";
 
 export class MosquitoDbCollection {
     constructor(config) {
@@ -16,22 +16,22 @@ export class MosquitoDbCollection {
 
     find = (find) => ({
         get: (config) => findObject({ ...this.builder, find }, config),
-        listen: (callback, config) => listenDocument(callback, { ...this.builder, find }, config),
+        listen: (callback, error, config) => listenDocument(callback, error, { ...this.builder, find }, config),
         count: () => countCollection({ ...this.builder, find }),
         limit: (limit) => ({
             get: (config) => findObject({ ...this.builder, find, limit }, config),
-            listen: (callback, config) => listenDocument(callback, { ...this.builder, find, limit }, config),
+            listen: (callback, error, config) => listenDocument(callback, error, { ...this.builder, find, limit }, config),
             sort: (sort, direction) => ({
                 get: (config) => findObject({ ...this.builder, find, limit, sort, direction }, config),
-                listen: (callback, config) => listenDocument(callback, { ...this.builder, find, limit, sort, direction }, config)
+                listen: (callback, error, config) => listenDocument(callback, error, { ...this.builder, find, limit, sort, direction }, config)
             })
         }),
         sort: (sort, direction) => ({
             get: (config) => findObject({ ...this.builder, find, sort, direction }, config),
-            listen: (callback, config) => listenDocument(callback, { ...this.builder, find, sort, direction }, config),
+            listen: (callback, error, config) => listenDocument(callback, error, { ...this.builder, find, sort, direction }, config),
             limit: (limit) => ({
                 get: (config) => findObject({ ...this.builder, find, sort, direction, limit }, config),
-                listen: (callback, config) => listenDocument(callback, { ...this.builder, find, sort, direction, limit }, config)
+                listen: (callback, error, config) => listenDocument(callback, error, { ...this.builder, find, sort, direction, limit }, config)
             })
         })
     });
@@ -44,10 +44,10 @@ export class MosquitoDbCollection {
 
     get = (config) => findObject({ ...this.builder }, config);
 
-    listen = (callback, config) => listenDocument(callback, { ...this.builder }, config);
+    listen = (callback, error, config) => listenDocument(callback, error, { ...this.builder }, config);
 
     findOne = (findOne) => ({
-        listen: (callback, config) => listenDocument(callback, { ...this.builder, findOne }, config),
+        listen: (callback, error, config) => listenDocument(callback, error, { ...this.builder, findOne }, config),
         get: (config) => findObject({ ...this.builder, findOne }, config)
     });
 
@@ -87,32 +87,34 @@ export class MosquitoDbCollection {
     // writeBatchMap = (map) => commitData({ ...this.builder, find }, map, 'writeBatchMap');
 }
 
-const listenDocument = (callback, builder, config) => {
+const listenDocument = (callback, onError, builder, config) => {
     const { projectUrl, dbUrl, dbName, accessKey, path, find, findOne, sort, direction, limit, disableCache } = builder,
         accessId = generateRecordID(builder, config);
 
-    let hasCancelled, hasRespond, cacheListener, socket;
+    let hasCancelled, hasRespond, cacheListener, socket, wasDisconnected, lastToken = Scoped.AuthJWTToken[projectUrl] || null, lastInitRef = 0;
 
     if (!disableCache) {
         cacheListener = DatabaseRecordsListener.startKeyListener(accessId, async () => {
             const cache = await getRecord(projectUrl, dbUrl, dbName, path, accessId);
-            if (cache) callback(cache.value);
+            if (cache) callback?.(cache.value);
         });
 
         (async function () {
             try {
+                await awaitStore();
                 const a = await (await fetch(EngineApi._areYouOk(projectUrl))).json();
                 if (a.status !== 'yes') throw 'am_sick';
             } catch (e) {
                 if (hasRespond || hasCancelled) return;
                 DatabaseRecordsListener.triggerKeyListener(accessId);
             }
-        })()
+        })();
     }
 
-    (async function () {
+    const init = async () => {
+        const processID = ++lastInitRef;
         await awaitRefreshToken(projectUrl);
-        if (hasCancelled) return;
+        if (hasCancelled || processID !== lastInitRef) return;
         socket = io(`ws://${projectUrl.split('://')[1]}`, {
             auth: {
                 mtoken: Scoped.AuthJWTToken[projectUrl],
@@ -127,21 +129,41 @@ const listenDocument = (callback, builder, config) => {
         socket.on('mSnapshot', async ([err, snapshot]) => {
             hasRespond = true;
             if (err) {
-                callback(undefined, err?.simpleError || simplifyError('unexpected_error', `${e}`).simpleError)
+                onError?.(err?.simpleError || simplifyError('unexpected_error', `${e}`).simpleError);
             } else if (disableCache) {
-                callback(snapshot);
+                callback?.(snapshot);
             } else {
                 await insertRecord(projectUrl, dbUrl, dbName, path, accessId, { sort, direction, limit, find, findOne, config }, snapshot);
                 DatabaseRecordsListener.triggerKeyListener(accessId);
             }
         });
-    })();
+
+        socket.on('connect', () => {
+            if (wasDisconnected) socket.emit(findOne ? '_listenDocument' : '_listenCollection');
+        });
+
+        socket.on('disconnect', () => {
+            wasDisconnected = true;
+        });
+    };
+
+    init();
+
+    const tokenListener = listenToken(t => {
+        if ((t || null) !== lastToken) {
+            socket?.close?.();
+            wasDisconnected = undefined;
+            init();
+        }
+        lastToken = t;
+    }, projectUrl);
 
     return () => {
         if (hasCancelled) return;
         hasCancelled = true;
         if (socket) socket.close();
         cacheListener?.();
+        tokenListener?.();
     }
 }
 
@@ -171,12 +193,12 @@ const countCollection = async (builder) => {
             } else if (retries > maxRetries) {
                 reject({ error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
             } else {
-                const onlineListener = listenConnection(connected => {
+                const onlineListener = listenReachableServer(connected => {
                     if (connected) {
                         onlineListener();
                         readValue().then(resolve, reject);
                     }
-                });
+                }, projectUrl);
             }
         }
     });
@@ -189,9 +211,9 @@ const initOnDisconnectionTask = (builder, value, type) => {
     let hasCancelled, socket;
 
     (async function () {
+        const { projectUrl, dbUrl, dbName, accessKey, path, find } = builder;
         await awaitRefreshToken(projectUrl);
         if (hasCancelled) return;
-        const { projectUrl, dbUrl, dbName, accessKey, path, find } = builder;
 
         socket = io(`ws://${projectUrl.split('://')[1]}`, {
             auth: {
@@ -211,7 +233,7 @@ const initOnDisconnectionTask = (builder, value, type) => {
         if (socket) socket.emit('_cancelDisconnectWriteTask');
         setTimeout(() => {
             if (socket) socket.close();
-        }, 7);
+        }, 700);
         hasCancelled = true;
     }
 }
@@ -250,12 +272,12 @@ const findObject = async (builder, config) => {
             } else if (retries > maxRetries) {
                 reject({ error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
             } else {
-                const onlineListener = listenConnection(connected => {
+                const onlineListener = listenReachableServer(connected => {
                     if (connected) {
                         onlineListener();
                         readValue().then(resolve, reject);
                     }
-                });
+                }, projectUrl);
             }
         }
     });
@@ -314,12 +336,12 @@ const commitData = async (builder, value, type) => {
                 console.error(`retry exceed limit(${maxRetries}): ${type} error (${path}), ${e}`);
                 if (!disableCache) removePendingWrite(projectUrl, dbUrl, dbName, writeId);
             } else {
-                const onlineListener = listenConnection(connected => {
+                const onlineListener = listenReachableServer(connected => {
                     if (connected) {
                         onlineListener();
                         sendValue();
                     }
-                });
+                }, projectUrl);
                 resolve({ status: 'pending' });
             }
         }

@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { StoreReadyListener } from "./listeners";
+import { ServerReachableListener, StoreReadyListener } from "./listeners";
 import { CACHE_STORAGE_PATH } from "./values";
 import { CacheStore, Scoped } from "./variables";
 
@@ -39,6 +39,19 @@ export const awaitStore = () => new Promise(resolve => {
     }
     const l = StoreReadyListener.startListener(t => {
         if (t === 'ready') {
+            resolve();
+            l();
+        }
+    }, true);
+});
+
+export const awaitReachableServer = (projectUrl) => new Promise(resolve => {
+    if (Scoped.IS_CONNECTED[projectUrl]) {
+        resolve();
+        return;
+    }
+    const l = ServerReachableListener.startKeyListener(projectUrl, t => {
+        if (t) {
             resolve();
             l();
         }

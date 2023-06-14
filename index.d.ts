@@ -13,11 +13,16 @@ interface GetDatabase {
 }
 
 interface mdeletion { $deletion: true }
+interface mtimestamp { $timestamp: 'now' }
 
 export const FIELD_DELETION: mdeletion;
-export function TIMESTAMP(time?: number): { $timestamp: 'now' | number };
+export const TIMESTAMP: mtimestamp;
 export function INCREMENT(count?: number): { $increment: number };
-export function listenConnection(callback: (isConnected: boolean) => void): () => void;
+
+interface FetchHttpInit extends RequestInit {
+    retries?: number;
+    enableAuth: boolean;
+}
 
 export default class RNMosquitoDb {
     constructor(config: MosquitoDbConfig);
@@ -25,54 +30,60 @@ export default class RNMosquitoDb {
     collection(path: string): MosquitoDbCollection;
     auth(): MosquitoDbAuth;
     storage(): MosquitoDbStorage;
+    fetchHttp(endpoint: string, init?: FetchHttpInit): Promise<Response>;
+    listenReachableServer(callback: (reachable: boolean) => void): () => void;
 }
 
 interface MosquitoDbCollection {
     find: (find?: DocumentFind) => ({
         get: (config?: GetConfig) => Promise<DocumentResult[]>;
-        listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+        listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
         count: () => Promise<number>;
+        random: (config?: GetConfig) => Promise<DocumentResult[]>;
         limit: (limit: number) => ({
+            random: (config?: GetConfig) => Promise<DocumentResult[]>;
             get: (config?: GetConfig) => Promise<DocumentResult[]>;
-            listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+            listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
             sort: (sort: Sort | string, direction?: SortDirection) => ({
                 get: (config?: GetConfig) => Promise<DocumentResult[]>;
-                listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+                listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
             })
         });
         sort: (sort: Sort | string, direction?: SortDirection) => ({
             get: (config?: GetConfig) => Promise<DocumentResult[]>;
-            listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+            listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
             limit: (limit: number) => ({
                 get: (config?: GetConfig) => Promise<DocumentResult[]>;
-                listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+                listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
             })
         })
     });
+    random: (config?: GetConfig) => Promise<DocumentResult[]>;
     sort: (sort: Sort | string, direction?: SortDirection) => ({
         get: (config?: GetConfig) => Promise<DocumentResult[]>;
-        listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+        listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
         limit: (limit: number) => ({
             get: (config?: GetConfig) => Promise<DocumentResult[]>;
-            listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+            listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
         })
     });
     limit: (limit: number) => ({
+        random: (config?: GetConfig) => Promise<DocumentResult[]>;
         get: (config?: GetConfig) => Promise<DocumentResult[]>;
-        listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+        listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
         sort: (sort: Sort | string, direction?: SortDirection) => ({
             get: (config?: GetConfig) => Promise<DocumentResult[]>;
-            listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+            listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
         })
     });
     count: () => Promise<number>;
     get: (config?: GetConfig) => Promise<DocumentResult[]>;
-    listen: (callback: (snapshot?: DocumentResult[], error?: DocumentError) => void, config?: GetConfig) => void;
+    listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
     findOne: (findOne?: DocumentFind) => ({
         get: (config?: GetConfig) => Promise<DocumentResult>;
-        listen: (callback: (snapshot?: DocumentResult, error?: DocumentError) => void, config?: GetConfig) => void;
+        listen: (callback: (snapshot?: DocumentResult) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
     });
-    attachDisconnectionTask: () => ({
+    onDisconnect: () => ({
         setOne: (value: DocumentWriteValue) => () => void;
         setMany: (value: DocumentWriteValue) => () => void;
         updateOne: (find: DocumentFind, value: DocumentWriteValue) => () => void;
@@ -132,12 +143,12 @@ interface DocumentWriteValue {
 interface MosquitoDbAuth {
     customSignin: (email: string, password: string) => Promise<SigninResult>;
     customSignup: (email: string, password: string, name?: string, metadata?: Object) => Promise<SigninResult>;
-    googleSignin: (token: string) => Promise<SigninResult>;
-    appleSignin: () => Promise<SigninResult>;
-    facebookSignin: () => Promise<SigninResult>;
-    twitterSignin: () => Promise<SigninResult>;
-    githubSignin: () => Promise<SigninResult>;
-    listenVerifiedStatus: (callback: (error?: {}, verified?: boolean) => void) => () => void;
+    googleSignin: (token: string) => Promise<SignupResult>;
+    appleSignin: () => Promise<SignupResult>;
+    facebookSignin: () => Promise<SignupResult>;
+    twitterSignin: () => Promise<SignupResult>;
+    githubSignin: () => Promise<SignupResult>;
+    listenVerifiedStatus: (callback?: (verified?: boolean) => void, onError?: (error?: ErrorResponse) => void) => () => void;
     listenAuthToken: (callback: (token: string) => void) => () => void;
     getAuthToken: () => Promise<string>;
     listenAuth: (callback: (auth: AuthData) => void) => () => void;
@@ -149,6 +160,10 @@ interface MosquitoDbAuth {
 interface SigninResult {
     user: AuthData;
     token: string;
+}
+
+interface SignupResult extends SigninResult {
+    isNewUser: boolean;
 }
 
 interface AuthData {

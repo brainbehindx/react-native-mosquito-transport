@@ -1,5 +1,10 @@
-import { addEventListener } from "@react-native-community/netinfo";
-import { Scoped } from "./variables";
+import { ServerReachableListener } from "./listeners";
+
+export const simplifyError = (error, message) => ({
+    simpleError: { error, message }
+});
+
+export const simplifyCaughtError = (e) => e?.simpleError ? e : simplifyError('unexpected_error', `${e}`);
 
 export const everyEntrie = (obj, callback) => {
     if (typeof obj !== 'object' || Array.isArray(obj)) return;
@@ -41,26 +46,9 @@ export const queryEntries = (obj, lastPath = '', exceptions = []) => {
     return o;
 }
 
-export const listenConnection = (callback) => {
-    let hasAttached, hasCancelled;
-
-    const listener = addEventListener(s => {
-        if (hasAttached) {
-            callback?.(s.isInternetReachable);
-        } else
-            setTimeout(() => {
-                if (hasCancelled) {
-                    listener();
-                } else callback?.(s.isInternetReachable);
-                hasAttached = true;
-            }, 1);
-    });
-
-    return () => {
-        if (hasAttached) listener();
-        hasCancelled = true;
-    }
-}
+export const listenReachableServer = (callback, projectUrl) => ServerReachableListener.startKeyListener(projectUrl, t => {
+    if (typeof t === 'boolean') callback?.(t);
+}, true);
 
 export const prefixStoragePath = (path, prefix = 'file:///') => {
     if (!path) return path;
@@ -74,33 +62,3 @@ export const getUrlExtension = (url) => {
     const r = url.split(/[#?]/)[0].split(".").pop().trim();
     return r === url ? '' : r;
 }
-
-export const getMediaType = (value) => {
-    let extension = (value || '').toLowerCase().split('.').pop(),
-        result = '';
-
-    if (extension) {
-        extension = `.${extension}`.toLowerCase();
-
-        const audios = '.3g2 .3gp .aac .adt .adts .aif .aifc .aiff .asf .au .m3u .m4a .m4b .mid .midi .mp2 .mp3 .mp4 .rmi .snd .wav .wax .wma'.split(' '),
-            images = '.jpeg .jpg .png'.split(' '),
-            videos = '.mp4';
-
-        if (images.includes(extension)) result = extension === '.png' ? 'image/png' : 'image/jpeg';
-        else if (videos === extension) result = 'video/mp4';
-        else if (audios.includes(extension)) result = `audio/${extension.split('.').join('')}`;
-        else if (extension === '.pdf') result = 'application/pdf';
-        else if (extension === '.xls') result = 'application/vnd.ms-excel';
-        else if (extension === '.xlsx') result = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-        else if (extension === '.doc') result = 'application/msword';
-        else if (extension === '.docx') result = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-        else if (extension === '.ppt') result = 'application/vnd.ms-powerpoint';
-        else if (extension === '.pptx') result = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-        else if (extension === '.zip') result = 'application/zip';
-        else if (extension === '.txt') result = 'text/plain';
-    }
-
-    return result;
-}
-
-const IS_ONLINE = () => Scoped.IS_CONNECTED;

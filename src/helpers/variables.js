@@ -1,6 +1,6 @@
 export const Scoped = {
     PendingIte: 0,
-    IS_CONNECTED: undefined,
+    IS_CONNECTED: {},
     AuthJWTToken: {},
     cacheStorageReducer: undefined,
     IsStoreReady: false,

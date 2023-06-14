@@ -1,6 +1,6 @@
 {
   "name": "react-native-mosquitodb",
-  "version": "0.0.5",
+  "version": "0.0.11",
   "description": "React native javascript sdk for mosquitodb",
   "main": "index.js",
   "scripts": {
@@ -27,7 +27,8 @@
   "homepage": "https://github.com/deflexable/react-native-mosquitodb#readme",
   "dependencies": {
     "@types/lodash": "^4.14.194",
-    "lodash": "^4.17.21"
+    "lodash": "^4.17.21",
+    "socket.io-client": "^4.6.2"
   },
   "engines": {
     "node": ">= 16.0.0"
