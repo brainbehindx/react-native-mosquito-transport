@@ -3,7 +3,8 @@ import { Scoped } from "../../helpers/variables";
 import { awaitRefreshToken } from "../auth/accessor";
 
 export const mfetch = async (input, init, config) => {
-    const { projectUrl, maxRetries = 7, apiUrl } = config;
+    const { projectUrl, maxRetries = 7, apiUrl } = config,
+        disableAuth = init?.disableAuth;
 
     if (init?.retries && (!IS_WHOLE_NUMBER(init?.retries) || init?.retries < 0))
         throw 'retries must be a positive whole number';
@@ -15,18 +16,18 @@ export const mfetch = async (input, init, config) => {
 
     const callFetch = () => new Promise(async (resolve, reject) => {
         try {
-            if (init?.enableAuth) await awaitRefreshToken(projectUrl);
+            if (!disableAuth) await awaitRefreshToken(projectUrl);
             const f = await fetch(`${apiUrl}/${input}`, {
                 cache: 'reload',
                 ...init,
                 headers: {
                     ...init?.headers,
-                    ...(init?.enableAuth ? { mtoken: Scoped.AuthJWTToken[projectUrl] } : {})
+                    ...(!disableAuth ? { mtoken: Scoped.AuthJWTToken[projectUrl] } : {})
                 }
             }),
                 simple = f.headers.get('simple_error');
 
-            if (simple) throw { simpleError: simple };
+            if (simple) throw { simpleError: JSON.parse(simple) };
             resolve(f);
         } catch (e) {
             if (e?.simpleError) {

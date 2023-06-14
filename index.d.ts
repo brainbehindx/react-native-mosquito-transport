@@ -6,6 +6,7 @@ interface MosquitoDbConfig {
     disableCache?: boolean;
     accessKey: string;
     maxRetries?: number;
+    awaitStorage?: boolean;
 }
 
 interface GetDatabase {
@@ -21,7 +22,7 @@ export function INCREMENT(count?: number): { $increment: number };
 
 interface FetchHttpInit extends RequestInit {
     retries?: number;
-    enableAuth: boolean;
+    disableAuth?: boolean;
 }
 
 export default class RNMosquitoDb {

@@ -17,7 +17,8 @@
     "serverless",
     "Baas",
     "database",
-    "react-native"
+    "react-native",
+    "mongodb"
   ],
   "author": "Anthony Onabanjo <deflexable@gmail.com> (https://github.com/deflexable)",
   "license": "MIT",
@@ -27,6 +28,7 @@
   "homepage": "https://github.com/deflexable/react-native-mosquitodb#readme",
   "dependencies": {
     "@types/lodash": "^4.14.194",
+    "base-64": "^1.0.0",
     "lodash": "^4.17.21",
     "socket.io-client": "^4.6.2"
   },

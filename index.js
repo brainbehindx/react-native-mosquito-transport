@@ -92,6 +92,10 @@ const validator = {
     maxRetries: (v) => {
         if (typeof v !== 'number' || v <= 0)
             throw `Invalid value supplied to maxRetries, value must be number and greater than zero`;
+    },
+    awaitStorage: (v) => {
+        if (v !== undefined && typeof v !== 'boolean')
+            throw `Invalid value supplied to awaitStorage, expected a boolean but got ${v}`;
     }
 };
 

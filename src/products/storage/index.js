@@ -3,7 +3,8 @@ import { prefixStoragePath } from "../../helpers/peripherals";
 import { Scoped } from "../../helpers/variables";
 import { encode as btoa } from 'base-64';
 import { DeviceEventEmitter, NativeEventEmitter, NativeModules, Platform } from 'react-native';
-import { buildFetchInterface, simplifyError } from "../../helpers/utils";
+import { awaitReachableServer, buildFetchInterface, simplifyError } from "../../helpers/utils";
+import { awaitRefreshToken } from "../auth/accessor";
 
 const LINKING_ERROR =
     `The package 'react-native-mosquitodb' doesn't seem to be linked. Make sure: \n\n` +
@@ -27,11 +28,13 @@ export class MosquitoDbStorage {
     }
 
     downloadFile(link = '', onComplete, destination, onProgress) {
-        const { projectUrl, accessKey } = this.builder;
+        let hasFinished, isPaused, hasCancelled;
+
+        const { projectUrl, accessKey, awaitStorage } = this.builder;
 
         if (destination && (!destination?.trim() || typeof destination !== 'string')) {
-            onComplete?.({ error: 'destination_invalid', message: `destination is invalid in downloadFile()` });
-            return;
+            onComplete?.({ error: 'destination_invalid', message: 'destination is invalid in downloadFile()' });
+            return () => { };
         }
         if (destination) destination = prefixStoragePath(destination?.trim());
 
@@ -40,69 +43,82 @@ export class MosquitoDbStorage {
                 error: 'invalid_link',
                 message: `link has an invalid value, expected a string that starts with "${EngineApi.staticStorage(projectUrl)}/"`
             });
-            return;
+            return () => { };
         }
         link = link.trim();
 
-        let hasFinished, isPaused;
+        const init = async () => {
+            if (awaitStorage) await awaitReachableServer(projectUrl);
+            await awaitRefreshToken(projectUrl);
 
-        const processID = `${++Scoped.StorageProcessID}`,
-            progressListener = emitter.addListener('mosquitodb-download-progress', ({ processID: ref, receivedBtyes, expectedBytes }) => {
-                if (processID !== ref || hasFinished) return;
-                onProgress?.({
-                    receivedBtyes,
-                    expectedBytes,
-                    isPaused: !!isPaused,
-                    pause: () => {
-                        if (hasFinished || isPaused) return;
-                        MosquitodbModule.pauseDownload(processID);
-                        isPaused = true;
-                    },
-                    resume: () => {
-                        if (hasFinished || !isPaused) return;
-                        MosquitodbModule.pauseDownload(processID);
-                        isPaused = false;
-                    }
+            if (hasCancelled) return;
+
+            const processID = `${++Scoped.StorageProcessID}`,
+                progressListener = emitter.addListener('mosquitodb-download-progress', ({ processID: ref, receivedBtyes, expectedBytes }) => {
+                    if (processID !== ref || hasFinished || hasCancelled) return;
+                    onProgress?.({
+                        receivedBtyes,
+                        expectedBytes,
+                        isPaused: !!isPaused,
+                        pause: () => {
+                            if (hasFinished || isPaused || hasCancelled) return;
+                            MosquitodbModule.pauseDownload(processID);
+                            isPaused = true;
+                        },
+                        resume: () => {
+                            if (hasFinished || !isPaused || hasCancelled) return;
+                            MosquitodbModule.pauseDownload(processID);
+                            isPaused = false;
+                        }
+                    });
+                }),
+                resultListener = emitter.addListener('mosquitodb-download-status', ({ processID: ref, error, errorDes, result }) => {
+                    if (processID !== ref) return;
+                    if (result)
+                        try {
+                            result = JSON.parse(result);
+                        } catch (e) { }
+
+                    const path = result?.file || undefined;
+
+                    if (!hasFinished && !hasCancelled)
+                        onComplete?.(path ? undefined : (result?.simpleError || { error, errorDes }), path);
+                    resultListener.remove();
+                    progressListener.remove();
+                    hasFinished = true;
                 });
-            }),
-            resultListener = emitter.addListener('mosquitodb-download-status', ({ processID: ref, error, errorDes, result }) => {
-                if (processID !== ref || hasFinished) return;
-                if (result)
-                    try {
-                        result = JSON.parse(result);
-                    } catch (e) { }
 
-                const path = result?.file || undefined;
-
-                if (!hasFinished) onComplete?.(path ? undefined : (result?.simpleError || { error, errorDes }), path);
-                resultListener.remove();
-                progressListener.remove();
-                hasFinished = true;
+            MosquitodbModule.downloadFile({
+                url: link,
+                authToken: Scoped.AuthJWTToken[projectUrl],
+                ...(destination ? {
+                    destination: destination.substring('file://'.length),
+                    destinationDir: `${destination.substring('file://'.length)}`.split('/').filter((_, i, a) => i !== a.length - 1).join('/')
+                } : {}),
+                processID,
+                urlName: link.split('/').pop(),
+                authorization: `Bearer ${btoa(accessKey)}`
             });
+        }
 
-        MosquitodbModule.downloadFile({
-            url: link,
-            authToken: Scoped.AuthJWTToken[projectUrl],
-            ...(destination ? {
-                destination: destination.substring('file://'.length),
-                destinationDir: `${destination.substring('file://'.length)}`.split('/').filter((_, i, a) => i !== a.length - 1).join('/')
-            } : {}),
-            processID,
-            urlName: link.split('/').pop(),
-            authorization: `Bearer ${btoa(accessKey)}`
-        });
+        init();
 
         return () => {
-            if (typeof hasFinished === 'boolean') return;
+            if (hasFinished || hasCancelled) return;
             MosquitodbModule.cancelDownload(processID);
-            hasFinished = false;
+            hasCancelled = true;
+            setTimeout(() => {
+                onComplete?.({ error: 'download_aborted', message: 'The download process was aborted' });
+            }, 1);
         }
     }
 
     uploadFile(file = '', destination = '', onComplete, onProgress) {
+        let hasFinished, hasCancelled;
+
         if (!file?.trim() || typeof file !== 'string') {
-            onComplete?.({ error: 'file_path_invalid', message: `file is required in uploadFile()` });
-            return;
+            onComplete?.({ error: 'file_path_invalid', message: 'file must be a non-empty string in uploadFile()' });
+            return () => { };
         }
         destination = destination?.trim();
 
@@ -113,45 +129,56 @@ export class MosquitoDbStorage {
 
         if (destErr) {
             onComplete?.({ error: 'destination_invalid', message: destErr });
-            return;
+            return () => { };
         }
 
-        let hasFinished;
+        const { projectUrl, accessKey, awaitStorage } = this.builder,
+            processID = `${++Scoped.StorageProcessID}`;
 
-        const { projectUrl, accessKey } = this.builder,
-            processID = `${++Scoped.StorageProcessID}`,
-            progressListener = emitter.addListener('mosquitodb-uploading-progress', ({ processID: ref, sentBtyes, totalBytes }) => {
-                if (processID !== ref || hasFinished) return;
+        const init = async () => {
+            if (awaitStorage) await awaitReachableServer(projectUrl);
+            await awaitRefreshToken(projectUrl);
+
+            if (hasCancelled) return;
+            const progressListener = emitter.addListener('mosquitodb-uploading-progress', ({ processID: ref, sentBtyes, totalBytes }) => {
+                if (processID !== ref || hasFinished || hasCancelled) return;
                 onProgress?.({ sentBtyes, totalBytes });
             }),
-            resultListener = emitter.addListener('mosquitodb-uploading-status', ({ processID: ref, error, errorDes, result }) => {
-                if (processID !== ref || hasFinished) return;
-                if (result)
-                    try {
-                        result = JSON.parse(result);
-                    } catch (e) { }
+                resultListener = emitter.addListener('mosquitodb-uploading-status', ({ processID: ref, error, errorDes, result }) => {
+                    if (processID !== ref || hasFinished) return;
+                    if (result)
+                        try {
+                            result = JSON.parse(result);
+                        } catch (e) { }
 
-                const downloadUrl = result?.downloadUrl || undefined;
+                    const downloadUrl = result?.downloadUrl || undefined;
 
-                if (!hasFinished) onComplete?.(downloadUrl ? undefined : (result?.simpleError || { error, errorDes }), downloadUrl);
-                resultListener.remove();
-                progressListener.remove();
-                hasFinished = true;
+                    if (!hasFinished && !hasCancelled)
+                        onComplete?.(downloadUrl ? undefined : (result?.simpleError || { error, errorDes }), downloadUrl);
+                    resultListener.remove();
+                    progressListener.remove();
+                    hasFinished = true;
+                });
+
+            MosquitodbModule.uploadFile({
+                url: EngineApi._uploadFile(projectUrl),
+                file: isAsset ? file : file.substring('file://'.length),
+                authToken: Scoped.AuthJWTToken[projectUrl],
+                destination,
+                processID,
+                authorization: `Bearer ${btoa(accessKey)}`
             });
+        }
 
-        MosquitodbModule.uploadFile({
-            url: EngineApi._uploadFile(projectUrl),
-            file: isAsset ? file : file.substring('file://'.length),
-            authToken: Scoped.AuthJWTToken[projectUrl],
-            destination,
-            processID,
-            authorization: `Bearer ${btoa(accessKey)}`
-        });
+        init();
 
         return () => {
-            if (typeof hasFinished === 'boolean') return;
+            if (hasFinished || hasCancelled) return;
+            hasCancelled = true;
+            setTimeout(() => {
+                onComplete?.({ error: 'upload_aborted', message: 'The upload process was aborted' });
+            }, 1);
             MosquitodbModule.cancelUpload(processID);
-            hasFinished = false;
         }
     }
 
