@@ -124,7 +124,7 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
         }, accessKey))).json();
         if (r.simpleError) throw r;
         resolve({ user: r.result.tokenData, token: r.result.token });
-        await injectFreshToken(projectUrl, r.result);
+        await injectFreshToken(builder, r.result);
     } catch (e) {
         reject(e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` });
     }
@@ -141,7 +141,7 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
         }, accessKey))).json();
         if (r.simpleError) throw r;
         resolve({ user: r.result.tokenData, token: r.result.token });
-        await injectFreshToken(projectUrl, r.result);
+        await injectFreshToken(builder, r.result);
     } catch (e) {
         reject(e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` });
     }
@@ -185,7 +185,7 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
         }, accessKey))).json();
         if (r.simpleError) throw r;
         resolve({ user: r.result.tokenData, token: r.result.token, isNewUser: r.isNewUser });
-        await injectFreshToken(projectUrl, r.result);
+        await injectFreshToken(builder, r.result);
     } catch (e) {
         reject(e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` });
     }

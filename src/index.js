@@ -1,14 +1,14 @@
-import { listenReachableServer } from "./src/helpers/peripherals";
-import { releaseCacheStore } from "./src/helpers/utils";
-import { Scoped } from "./src/helpers/variables";
-import { MosquitoDbAuth } from "./src/products/auth";
-import { MosquitoDbCollection } from "./src/products/database";
-import { MosquitoDbStorage } from "./src/products/storage";
+import { listenReachableServer } from "./helpers/peripherals";
+import { releaseCacheStore } from "./helpers/utils";
+import { Scoped } from "./helpers/variables";
+import { MosquitoDbAuth } from "./products/auth";
+import { MosquitoDbCollection } from "./products/database";
+import { MosquitoDbStorage } from "./products/storage";
 import { encode, decode } from 'base-64';
-import { InitializedProject, ServerReachableListener } from "./src/helpers/listeners";
-import { initTokenRefresher, triggerAuth, triggerAuthToken } from "./src/products/auth/accessor";
-import { FIELD_DELETION, INCREMENT, TIMESTAMP } from "./src/products/database/types";
-import { mfetch } from "./src/products/http_callable";
+import { InitializedProject, ServerReachableListener } from "./helpers/listeners";
+import { initTokenRefresher, triggerAuth, triggerAuthToken } from "./products/auth/accessor";
+import { FIELD_DELETION, INCREMENT, TIMESTAMP } from "./products/database/types";
+import { mfetch } from "./products/http_callable";
 import { io } from "socket.io-client";
 
 globalThis.btoa = encode;

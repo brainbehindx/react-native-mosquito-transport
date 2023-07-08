@@ -40,7 +40,6 @@ interface MosquitoDbCollection {
         get: (config?: GetConfig) => Promise<DocumentResult[]>;
         listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
         count: () => Promise<number>;
-        random: (config?: GetConfig) => Promise<DocumentResult[]>;
         limit: (limit: number) => ({
             random: (config?: GetConfig) => Promise<DocumentResult[]>;
             get: (config?: GetConfig) => Promise<DocumentResult[]>;
@@ -59,7 +58,6 @@ interface MosquitoDbCollection {
             })
         })
     });
-    random: (config?: GetConfig) => Promise<DocumentResult[]>;
     sort: (sort: Sort | string, direction?: SortDirection) => ({
         get: (config?: GetConfig) => Promise<DocumentResult[]>;
         listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
@@ -129,10 +127,34 @@ interface DocumentError extends ErrorResponse {
 interface GetConfig {
     excludeFields?: string | string[];
     returnOnly?: string | string[];
+    extraction?: GetConfigExtraction | GetConfigExtraction[];
+}
+
+interface GetConfigExtraction {
+    limit?: number;
+    sort: string;
+    direction?: 'desc' | 'asc' | 1 | -1
+    collection: string;
+    find?: DocumentFind;
+    findOne?: DocumentFind
 }
 
 interface DocumentFind {
+    $and?: any[];
+    $nor?: any[];
+    $or?: any[];
+    $text?: {
+        $search: string;
+        $language?: string;
+        $caseSensitive?: boolean;
+        $diacriticSensitive?: boolean;
+    };
+    // $where?: string | ((this: TSchema) => boolean);
+    $comment?: string | Document;
+}
 
+declare interface Document {
+    [key: string]: any;
 }
 
 interface DocumentWriteResult { }

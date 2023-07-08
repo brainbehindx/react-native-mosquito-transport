@@ -20,6 +20,7 @@ export class MosquitoDbCollection {
         count: () => countCollection({ ...this.builder, find }),
         limit: (limit) => ({
             get: (config) => findObject({ ...this.builder, find, limit }, config),
+            random: (config) => findObject({ ...this.builder, find, limit, random: true }, config),
             listen: (callback, error, config) => listenDocument(callback, error, { ...this.builder, find, limit }, config),
             sort: (sort, direction) => ({
                 get: (config) => findObject({ ...this.builder, find, limit, sort, direction }, config),
@@ -118,7 +119,7 @@ const listenDocument = (callback, onError, builder, config) => {
         socket = io(`ws://${projectUrl.split('://')[1]}`, {
             auth: {
                 mtoken: Scoped.AuthJWTToken[projectUrl],
-                commands: { ...config, path, find: findOne || find, sort, direction, limit },
+                commands: { config, path, find: findOne || find, sort, direction, limit },
                 dbName,
                 dbUrl,
                 accessKey
@@ -239,7 +240,7 @@ const initOnDisconnectionTask = (builder, value, type) => {
 }
 
 const findObject = async (builder, config) => {
-    const { projectUrl, dbUrl, dbName, accessKey, maxRetries = 7, path, find, findOne, sort, direction, limit, disableCache } = builder,
+    const { projectUrl, dbUrl, dbName, accessKey, maxRetries = 7, path, find, findOne, sort, direction, limit, disableCache, random } = builder,
         accessId = generateRecordID(builder, config);
 
     if (!disableCache) {
@@ -257,7 +258,7 @@ const findObject = async (builder, config) => {
         try {
             await awaitRefreshToken(projectUrl);
             const r = await (await fetch(EngineApi[findOne ? '_readDocument' : '_queryCollection'](projectUrl), buildFetchInterface({
-                commands: { ...config, path, find: findOne || find, sort, direction, limit },
+                commands: { config, path, find: findOne || find, sort, direction, limit, random },
                 dbName,
                 dbUrl,
             }, accessKey, Scoped.AuthJWTToken[projectUrl]))).json();

@@ -11,7 +11,9 @@ export const listenToken = (callback, projectUrl) =>
         callback?.(t || null);
     }, true);
 
-export const injectFreshToken = async (projectUrl, obj) => {
+export const injectFreshToken = async (config, obj) => {
+    const { projectUrl } = config;
+
     await awaitStore();
     CacheStore.AuthStore[projectUrl] = { ...obj };
     Scoped.AuthJWTToken[projectUrl] = obj.token;
@@ -19,6 +21,7 @@ export const injectFreshToken = async (projectUrl, obj) => {
 
     triggerAuth(projectUrl);
     triggerAuthToken(projectUrl);
+    initTokenRefresher(config);
 }
 
 export const triggerAuth = async (projectUrl) => {
@@ -67,7 +70,7 @@ export const initTokenRefresher = async (config, forceRefresh) => {
     }
 }
 
-export const refreshToken = async (projectUrl, accessKey, processRef, remainRetries = 7, initialRetries = 7) => {
+export const refreshToken = (projectUrl, accessKey, processRef, remainRetries = 7, initialRetries = 7) => new Promise(async (resolve, reject) => {
     const lostProcess = simplifyError('process_lost', 'The token refresh process has been lost and replace with another one');
 
     try {
@@ -82,41 +85,37 @@ export const refreshToken = async (projectUrl, accessKey, processRef, remainRetr
         if (CacheStore.AuthStore[projectUrl]) {
             CacheStore.AuthStore[projectUrl] = { ...r.result };
             Scoped.AuthJWTToken[projectUrl] = r.result.token;
+            invalidateToken(projectUrl, accessKey, token);
+            resolve(r.result.token);
             triggerAuthToken(projectUrl);
             updateCacheStore();
-            invalidateToken(projectUrl, accessKey, token);
             initTokenRefresher({ projectUrl, accessKey, maxRetries: initialRetries });
-            return r.result.token;
         } else throw lostProcess;
     } catch (e) {
         if (e.simpleError) {
             console.error(`refreshToken error: ${e.simpleError?.message}`);
             doSignOut({ projectUrl, accessKey });
-            throw e.simpleError;
+            reject(e.simpleError);
         } else if (remainRetries <= 0) {
             console.error(`refreshToken retry exceeded, waiting for 2min before starting another retry`);
-            return new Promise((resolve, reject) => {
-                setTimeout(() => {
-                    if (processRef === Scoped.LastTokenRefreshRef[projectUrl]) {
-                        refreshToken(projectUrl, accessKey, processRef, initialRetries, initialRetries).then(resolve, reject);
-                    } else reject(lostProcess.simpleError);
-                }, 120000);
-            });
+            setTimeout(() => {
+                if (processRef === Scoped.LastTokenRefreshRef[projectUrl]) {
+                    refreshToken(projectUrl, accessKey, processRef, initialRetries, initialRetries).then(resolve, reject);
+                } else reject(lostProcess.simpleError);
+            }, 120000);
         } else {
-            return new Promise((resolve, reject) => {
-                const l = listenReachableServer(c => {
-                    if (c) {
-                        l();
-                        refreshToken(projectUrl, accessKey, processRef, remainRetries - 1, initialRetries).then(resolve, reject);
-                    } else if (processRef !== Scoped.LastTokenRefreshRef[projectUrl]) {
-                        reject(lostProcess.simpleError);
-                        l();
-                    }
-                }, projectUrl);
-            });
+            const l = listenReachableServer(c => {
+                if (c) {
+                    l();
+                    refreshToken(projectUrl, accessKey, processRef, remainRetries - 1, initialRetries).then(resolve, reject);
+                } else if (processRef !== Scoped.LastTokenRefreshRef[projectUrl]) {
+                    reject(lostProcess.simpleError);
+                    l();
+                }
+            }, projectUrl);
         }
     }
-}
+});
 
 export const invalidateToken = async (projectUrl, accessKey, token) => {
     try {
