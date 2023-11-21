@@ -1,34 +1,35 @@
-import { listenReachableServer } from "./helpers/peripherals";
+import 'react-native-get-random-values';
+import { IS_WHOLE_NUMBER, listenReachableServer } from "./helpers/peripherals";
 import { releaseCacheStore } from "./helpers/utils";
 import { Scoped } from "./helpers/variables";
 import { MosquitoDbAuth } from "./products/auth";
 import { MosquitoDbCollection } from "./products/database";
 import { MosquitoDbStorage } from "./products/storage";
-import { encode, decode } from 'base-64';
-import { InitializedProject, ServerReachableListener } from "./helpers/listeners";
+import { ServerReachableListener, TokenRefreshListener } from "./helpers/listeners";
 import { initTokenRefresher, triggerAuth, triggerAuthToken } from "./products/auth/accessor";
-import { FIELD_DELETION, INCREMENT, TIMESTAMP } from "./products/database/types";
+import { TIMESTAMP, DOCUMENT_EXTRACTION, FIND_GEO_JSON, GEO_JSON } from "./products/database/types";
 import { mfetch } from "./products/http_callable";
 import { io } from "socket.io-client";
-
-globalThis.btoa = encode;
-globalThis.atob = decode;
-
-releaseCacheStore();
+import { validateCollectionPath } from "./products/database/validator";
+import { CACHE_PROTOCOL } from "./helpers/values";
+import { trySendPendingWrite } from "./products/database/accessor";
 
 class RNMosquitoDb {
     constructor(config) {
         validateMosquitoDbConfig(config);
         this.config = {
             ...config,
+            uglify: config.uglifyRequest,
             apiUrl: config.projectUrl,
             projectUrl: config.projectUrl.split('/').filter((_, i, a) => i !== a.length - 1).join('/')
         };
+        if (!Scoped.ReleaseCacheData)
+            throw `releaseCache must be called before creating any mosquitodb instance`;
 
         const { projectUrl } = this.config;
 
-        if (!InitializedProject[projectUrl]) {
-            InitializedProject[projectUrl] = true;
+        if (!Scoped.InitializedProject[projectUrl]) {
+            Scoped.InitializedProject[projectUrl] = true;
             Scoped.LastTokenRefreshRef[projectUrl] = 0;
             triggerAuth(projectUrl);
             triggerAuthToken(projectUrl);
@@ -37,16 +38,28 @@ class RNMosquitoDb {
             const socket = io(`ws://${projectUrl.split('://')[1]}`);
 
             socket.on('connect', () => {
-                ServerReachableListener.triggerKeyListener(projectUrl, true);
+                ServerReachableListener.dispatch(projectUrl, true);
             });
             socket.on('disconnect', () => {
-                ServerReachableListener.triggerKeyListener(projectUrl, false);
+                ServerReachableListener.dispatch(projectUrl, false);
             });
 
             listenReachableServer(c => {
                 Scoped.IS_CONNECTED[projectUrl] = c;
+                if (c) trySendPendingWrite();
             }, projectUrl);
+
+            TokenRefreshListener.listenTo(projectUrl, v => {
+                Scoped.IS_TOKEN_READY[projectUrl] = v;
+            });
         }
+    }
+
+    static releaseCache(prop) {
+        if (Scoped.ReleaseCacheData) throw `calling releaseCache multiple times is prohibited`;
+        validateReleaseCacheProp({ ...prop });
+        Scoped.ReleaseCacheData = { ...prop };
+        releaseCacheStore({ ...prop });
     }
 
     getDatabase = (dbName, dbUrl) => ({
@@ -57,11 +70,30 @@ class RNMosquitoDb {
             ...(dbUrl ? { dbUrl } : {})
         })
     });
-    collection = (path) => new MosquitoDbCollection({ ...this.config, path });
+    collection = (path) => {
+        validateCollectionPath(path);
+        return new MosquitoDbCollection({ ...this.config, path });
+    }
     auth = () => new MosquitoDbAuth({ ...this.config });
     storage = () => new MosquitoDbStorage({ ...this.config });
-    fetchHttp = (endpoint, init) => mfetch(endpoint, init, { ...this.config });
+    fetchHttp = (endpoint, init, config) => mfetch(endpoint, init, { ...this.config, method: config });
     listenReachableServer = (callback) => listenReachableServer(callback, this.config.projectUrl);
+    wipeDatabaseCache = () => {
+
+    }
+}
+
+const validateReleaseCacheProp = (prop) => {
+    const cacheList = [...Object.values(CACHE_PROTOCOL)];
+
+    Object.entries(prop).forEach(([k, v]) => {
+        if (k === 'cachePassword') {
+            if (typeof v !== 'string' || v.trim().length <= 0)
+                throw `Invalid value supplied to cachePassword, value must be a string and greater than 0 characters`;
+        } else if (k === 'cacheProtocol') {
+            if (!cacheList.includes(`${v}`)) throw `unknown value supplied to ${k}, expected any of ${cacheList}`;
+        } else throw `Unexpected property named ${k}`;
+    });
 }
 
 const validator = {
@@ -90,12 +122,12 @@ const validator = {
             throw `Invalid value supplied to accessKey, value must be a string and greater than one`;
     },
     maxRetries: (v) => {
-        if (typeof v !== 'number' || v <= 0)
-            throw `Invalid value supplied to maxRetries, value must be number and greater than zero`;
+        if (typeof v !== 'number' || v <= 0 || !IS_WHOLE_NUMBER(v))
+            throw `Invalid value supplied to maxRetries, value must be whole number and greater than zero`;
     },
-    awaitStorage: (v) => {
-        if (v !== undefined && typeof v !== 'boolean')
-            throw `Invalid value supplied to awaitStorage, expected a boolean but got ${v}`;
+    uglifyRequest: () => {
+        if (typeof v !== 'boolean')
+            throw `Invalid value supplied to uglifyRequest, value must be a boolean`;
     }
 };
 
@@ -115,9 +147,10 @@ const validateMosquitoDbConfig = (config) => {
 }
 
 export {
-    FIELD_DELETION,
-    INCREMENT,
-    TIMESTAMP
-}
+    TIMESTAMP,
+    DOCUMENT_EXTRACTION,
+    FIND_GEO_JSON,
+    GEO_JSON
+};
 
 export default RNMosquitoDb;

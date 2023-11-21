@@ -1,171 +1,316 @@
-import _ from "lodash";
-import { IS_RAW_OBJECT, IS_WHOLE_NUMBER, queryEntries } from "../../helpers/peripherals";
+import { IS_RAW_OBJECT, objToUniqueString, queryEntries, shuffleArray, sortArrayByObjectKey } from "../../helpers/peripherals";
 import { awaitStore, updateCacheStore } from "../../helpers/utils";
-import { CacheStore, Scoped } from "../../helpers/variables";
-import { IS_TIMESTAMP } from "./types";
+import { CacheStore } from "../../helpers/variables";
 import { confirmFilterDoc } from "./validator";
+import getLodash from 'lodash/get';
+import setLodash from 'lodash/set';
+import unsetLodash from 'lodash/unset';
+import isEqual from 'lodash/isEqual';
+import { DEFAULT_DB_NAME, DEFAULT_DB_URL, DELIVERY, RETRIEVAL, WRITE_OPS, WRITE_OPS_LIST } from "../../helpers/values";
+import { DatabaseRecordsListener } from "../../helpers/listeners";
 
-export const insertRecord = async (projectUrl, dbUrl, dbName, collection, accessId, query, value) => {
+export const listenQueryEntry = (callback, { accessId, builder, config, processId }) => {
+    let lastObj = '';
+    const { episode = 0 } = config || {};
+
+    const l = DatabaseRecordsListener.listenTo(accessId, async (dispatchId) => {
+        const cache = await getRecord(builder, accessId);
+        if (
+            cache &&
+            !isEqual(lastObj, cache[episode]) &&
+            dispatchId === processId
+        ) callback(cache[episode]);
+        lastObj = cache[episode];
+    });
+
+    return () => {
+        lastObj = undefined;
+        l();
+    }
+}
+
+export const insertRecord = async (builder, accessId, query, value) => {
     await awaitStore();
-    if (!CacheStore.DatabaseRecords[projectUrl])
-        CacheStore.DatabaseRecords[projectUrl] = {};
+    const { projectUrl, dbUrl = DEFAULT_DB_URL, dbName = DEFAULT_DB_NAME, path } = builder,
+        { extraction, excludeFields, returnOnly } = query?.config,
+        kaf = `${objToUniqueString(extraction || {})},${(excludeFields || []).join(',')},${(returnOnly || []).join(',')}`,
+        colData = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'data', kaf], []);
 
-    if (!CacheStore.DatabaseRecords[projectUrl][dbUrl])
-        CacheStore.DatabaseRecords[projectUrl][dbUrl] = {};
+    (Array.isArray(value) ? value : [value]).forEach(e => {
+        const b4DocIndex = colData.findIndex(v => v._id === e._id);
+        if (b4DocIndex === -1) {
+            colData.push(e);
+        } else colData[b4DocIndex] = e;
+    });
 
-    if (!CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName])
-        CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName] = {};
-
-    if (!CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName][collection])
-        CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName][collection] = {};
-
-    CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName][collection][accessId] = { value, query };
+    setLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'data', kaf], [...colData]);
+    setLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'record', accessId], {
+        query,
+        result: value,
+        registeredOn: Date.now()
+    });
     updateCacheStore();
 }
 
-export const deleteRecord = async (projectUrl, dbUrl, dbName, accessId) => {
+export const getRecord = async (builder, accessId) => {
     await awaitStore();
-    if (CacheStore.DatabaseRecords[projectUrl]?.[dbUrl]?.[dbName]?.[accessId])
-        delete CacheStore.DatabaseRecords[projectUrl][dbUrl][dbName][accessId];
-    updateCacheStore();
-}
+    const { projectUrl, dbUrl = DEFAULT_DB_URL, dbName = DEFAULT_DB_NAME, path, command } = builder,
+        { config, find, findOne, sort, direction, limit, random } = command,
+        { extraction, excludeFields, returnOnly } = config || {},
+        kaf = `${objToUniqueString(extraction || {})},${(excludeFields || []).join(',')},${(returnOnly || []).join(',')}`,
+        colData = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'data', kaf], []),
+        colRecord = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'record', accessId]);
 
-export const getRecord = async (projectUrl, dbUrl, dbName, path, accessId) => {
-    await awaitStore();
-    return CacheStore.DatabaseRecords[projectUrl]?.[dbUrl]?.[dbName]?.[path]?.[accessId];
+    if (!colRecord) return null;
+    let choosenColData = colData.filter(v => confirmFilterDoc(v, findOne || find || {}));
+
+    if (random) {
+        choosenColData = shuffleArray(choosenColData);
+    } else if (sort) {
+        choosenColData = sortArrayByObjectKey(choosenColData, sort);
+        if (
+            direction === -1 ||
+            direction === 'desc' ||
+            direction === 'descending'
+        ) choosenColData = choosenColData.reverse();
+    }
+
+    if (findOne) {
+        choosenColData = choosenColData[0];
+    } else if (limit) choosenColData.filter((_, i) => i < limit);
+
+    return [choosenColData, colRecord.result];
 }
 
 export const generateRecordID = (builder, config) => {
-    const { find, findOne, sort, direction, limit, path, countDoc } = builder,
-        accessId = `collection:${path}->excludes:${(config?.excludeFields || []).join(',')}->includes:${(config?.returnOnly || []).join(',')}->${countDoc ? 'countDoc:yes->' : ''}sort:${sort || ''}->direction:${direction}->limit:${limit || ''}->${findOne ? 'findOne' : 'find'}:${queryEntries(findOne || find || {}).sort().join(',')}`;
+    const { command, path, countDoc } = builder,
+        { find, findOne, sort, direction, limit } = command || {},
+        { extraction, retrieval = RETRIEVAL.DEFAULT, delivery = DELIVERY.DEFAULT, excludeFields = [], returnOnly = [] } = config || {},
+        accessId = `collection:${path}->excludes:${(Array.isArray(excludeFields) ? excludeFields : [excludeFields]).filter(v => v !== undefined).join(',')}->includes:${(Array.isArray(returnOnly) ? returnOnly : [returnOnly]).filter(v => v !== undefined).join(',')}->${countDoc ? 'countDoc:yes->' : ''}sort:${sort || ''}->direction:${direction || ''}->limit:${limit || ''}->${findOne ? 'findOne' : 'find'}:${objToUniqueString(findOne || find || {})}:extraction:${objToUniqueString(extraction || {})}:retrieval:${retrieval}:delivery:${delivery}`;
 
     return accessId;
 }
 
-export const transformCollectionPath = (path = '') => `${path.split('/').join('.')}.$$collection$$`;
-
-// TODO: fix segment hint(returnOnly, excludeField)
-export const updateDatabaseStore = async (projectUrl, dbUrl, dbName, path, dataMap, segment) => {
+export const addPendingWrites = async (builder, writeId, result) => {
     await awaitStore();
-    prepareDatabaseStore(projectUrl, dbUrl, dbName);
+    const { projectUrl, dbUrl = DEFAULT_DB_URL, dbName = DEFAULT_DB_NAME, path } = builder,
+        { value: writeObj, find, type } = result,
+        isAtomic = type === 'updateOne' ||
+            type === 'updateMany' ||
+            type === 'mergeOne' ||
+            type === 'mergeMany',
+        colObj = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'data'], {});
 
-    const node = transformCollectionPath(path),
-        db = `${dbUrl}${dbName}`,
-        instantData = _.get(CacheStore.DatabaseStore[projectUrl][db], node);
+    let editions = [], duplicateSets = {};
 
-    if (!instantData) _.set(CacheStore.DatabaseStore[projectUrl][db], node, []);
+    Object.entries(colObj).forEach(([kaf, colList]) => {
+        let hasEndCommit, editionSet = [];
 
-    (Array.isArray(dataMap) ? dataMap : [dataMap]).forEach(e => {
-        if (!e._id) throw `No _id found in updateDatabaseStore(), collection(${path})`;
-        const store = _.get(CacheStore.DatabaseStore[projectUrl][db], node) || [],
-            cursor = store.findIndex(v => v._id === e._id),
-            isDeletion = !e.value;
-
-        if (cursor === -1) {
-            if (!isDeletion) _.set(CacheStore.DatabaseStore[projectUrl][db], node, [...store, { ...e.value }]);
+        if (type === 'setOne' || type === 'setMany') {
+            (type === 'setOne' ? [writeObj] : writeObj).forEach(e => {
+                if (colList.findIndex(v => v._id === e._id) === -1) {
+                    editionSet.push({ doc: deserializeNonAtomicWrite(e), dex: 'push', docId: writeObj._id });
+                } else if (!duplicateSets[e._id])
+                    console.error(`document with _id=${e._id} already exist locally with ${type}() operation, will try committing it online`);
+                duplicateSets[e._id] = true;
+            });
         } else {
-            if (isDeletion) {
-                _.set(CacheStore.DatabaseStore[projectUrl][db], node, store.filter((v, i) => i !== cursor));
-            } else _.set(CacheStore.DatabaseStore[projectUrl][db], node, store.map((v, i) => i === cursor ? ({ ...e.value }) : v));
+            colList.forEach((doc, docDex) => {
+                if (hasEndCommit) return;
+                let afDoc = undefined;
+
+                if (confirmFilterDoc(doc, find || {})) {
+                    if (type === 'deleteMany') {
+                        afDoc = null;
+                    } else if (type === 'deleteOne') {
+                        afDoc = null;
+                        hasEndCommit = true;
+                    } else if (isAtomic) {
+                        if ((deserializeAtomicWrite({}, { ...writeObj })?._id || find?._id) && type.endsWith('Many'))
+                            throw `avoid providing "_id" for ${type}() operation, use ${type.substring(0, type.length - 4)}One instead as _id only reference a single document`;
+
+                        afDoc = deserializeAtomicWrite({ ...doc }, { ...writeObj });
+                        if (type.endsWith('One')) hasEndCommit = true;
+                    } else {
+                        afDoc = deserializeNonAtomicWrite({ ...writeObj });
+                        hasEndCommit = true;
+                    }
+                }
+                if (afDoc !== undefined)
+                    editionSet.push({ doc: afDoc, dex: docDex, docId: doc._id, b4Doc: { ...doc } });
+            });
+        }
+
+        if (!editionSet.length) {
+            let hasNoID;
+
+            if (type === 'putOne') {
+                const nDoc = deserializeNonAtomicWrite(writeObj),
+                    nId = nDoc?._id || find?._id;
+
+                if (nId) {
+                    editionSet.push({
+                        doc: { ...nDoc, _id: nId },
+                        dex: 'push',
+                        docId: nId
+                    });
+                } else hasNoID = true;
+            } else if (type === 'mergeOne' || type === 'mergeMany') {
+                const nDoc = deserializeAtomicWrite({}, writeObj),
+                    nId = nDoc?._id || find?._id;
+
+                if (nId && type === 'mergeMany')
+                    throw `avoid providing "_id" for mergeMany() operation, use mergeOne instead as _id only reference a single document`;
+                if (nId) {
+                    editionSet.push({
+                        doc: { ...nDoc, _id: nId },
+                        dex: 'push',
+                        docId: nId
+                    });
+                } else hasNoID = true;
+            }
+            if (hasNoID) console.error(`no data found locally and _id was not provided for ${type}() operation, skipping local and proceeding to online commit`);
+        }
+        editions.push([kaf, editionSet]);
+    });
+
+    editions.forEach(([kaf, list]) => {
+        list.forEach(({ doc, dex, docId }) => {
+
+            if (dex === 'push') {
+                colObj[kaf].push({ ...doc });
+            } else if (doc === null) {
+                colObj[kaf] = colObj[kaf].filter(v => v._id !== docId);
+            } else {
+                colObj[kaf] = colObj[kaf].map(v => v._id === docId ? { ...doc } : v);
+            }
+        });
+    });
+
+
+    setLodash(CacheStore.PendingWrites, [projectUrl, `${dbUrl}${dbName}${path}`, writeId], {
+        find,
+        value: writeObj,
+        type,
+        editions,
+        addedOn: Date.now()
+    });
+
+    updateCacheStore();
+    notifyDatabaseNodeChanges(builder);
+}
+
+export const removePendingWrite = async (builder, writeId, revert) => {
+    await awaitStore();
+    const { projectUrl, dbUrl = DEFAULT_DB_URL, dbName = DEFAULT_DB_NAME, path } = builder,
+        pObj = getLodash(CacheStore.PendingWrites, [projectUrl, `${dbUrl}${dbName}${path}`, writeId]),
+        colObj = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'data']);
+
+    if (!pObj) return;
+
+    if (revert && colObj)
+        pObj.editions.forEach(([kaf, list]) => {
+            list.forEach(({ doc, dex, docId, b4Doc }) => {
+
+                if (dex === 'push') {
+                    colObj[kaf] = colObj[kaf].filter(v => v._id !== docId);
+                } else if (doc === null) {
+                    colObj[kaf] = [...colObj[kaf], b4Doc];
+                } else {
+                    colObj[kaf] = colObj[kaf].map(v => v._id === docId ? { ...b4Doc } : v);
+                }
+            });
+        });
+
+    unsetLodash(CacheStore.PendingWrites, [projectUrl, `${dbUrl}${dbName}${path}`, writeId]);
+    updateCacheStore();
+    notifyDatabaseNodeChanges(builder);
+}
+
+export const trySendPendingWrite = () => {
+
+}
+
+const notifyDatabaseNodeChanges = (builder) => {
+
+}
+
+const deserializeNonAtomicWrite = (writeObj) => {
+    const bj = {};
+
+    queryEntries(writeObj, []).forEach(([segment, value]) => {
+        if (segment[0].startsWith('$'))
+            throw `unexpected field "${segment[0]}"`;
+
+        if (segment.slice(-1)[0] === '$timestamp' && value === 'now') {
+            segment.pop();
+            value = Date.now();
+        }
+
+        setLodash(bj, segment.join('.'), value);
+    });
+    return bj;
+}
+
+const deserializeAtomicWrite = (b4Doc, writeObj) => {
+    const afDoc = { ...b4Doc },
+        affectedObj = {};
+
+    queryEntries(writeObj, []).forEach(([segment, value]) => {
+        const [op, path] = [segment[0], segment.filter((_, i) => i)];
+
+        if (!WRITE_OPS_LIST.includes(op) || !path.length)
+            throw `MongoInvalidArgumentError: Update document requires atomic operators`;
+
+        if (
+            path.length > 1 &&
+            IS_RAW_OBJECT(writeObj[op][path[0]]) &&
+            !affectedObj[path[0]]
+        ) {
+            affectedObj[path[0]] = true;
+            afDoc[path[0]] = {};
+        }
+
+        const nodeValue = getLodash(b4Doc, path.join('.'));
+
+        if (op === WRITE_OPS.$UNSET) {
+            unsetLodash(afDoc, path.join('.'));
+        } else {
+            if (
+                [WRITE_OPS.$MAX, WRITE_OPS.$MIN, WRITE_OPS.$INC, WRITE_OPS.$MUL].filter(v => v === op).length &&
+                isNaN(value)
+            ) throw `expected a number for "${op}" operation but got ${value}`;
+
+            if (path.slice(-1)[0] === '$timestamp' && value === 'now') {
+                const k = [WRITE_OPS.$SET, WRITE_OPS.$UNSET];
+                if (!k.includes(op))
+                    throw `invalid operator for updating timestamp, expected any of ${k}`;
+                path.pop();
+                value = Date.now();
+            }
+
+            if (op === WRITE_OPS.$RENAME) {
+                if (nodeValue === undefined) return;
+                if (typeof value !== 'string') throw `${op} operator expected a string value at ${path.join('.')}`;
+                unsetLodash(afDoc, path.join('.'));
+                path[path.length - 1] = value;
+            }
+
+            setLodash(
+                afDoc,
+                path.join('.'),
+                op === WRITE_OPS.$SET ? value :
+                    op === WRITE_OPS.$INC ? (isNaN(nodeValue) ? value : nodeValue + value) :
+                        op === WRITE_OPS.$MAX ? (isNaN(nodeValue) ? value : value > nodeValue ? value : nodeValue) :
+                            op === WRITE_OPS.$MIN ? (isNaN(nodeValue) ? value : value < nodeValue ? value : nodeValue) :
+                                op === WRITE_OPS.$MUL ? (isNaN(nodeValue) ? 0 : value * nodeValue) :
+                                    op === WRITE_OPS.$PULL ? (Array.isArray(nodeValue) ? nodeValue.filter(v => !isEqual(v, value)) : [value]) :
+                                        op === WRITE_OPS.$PUSH ? (Array.isArray(nodeValue) ? [...nodeValue, value] : [value]) :
+                                            op === WRITE_OPS.$RENAME ? nodeValue :
+                                                null // TODO:
+            );
         }
     });
 
-    updateCacheStore();
+    return afDoc;
 }
-
-export const prepareDatabaseStore = (projectUrl, dbUrl, dbName) => {
-    if (!CacheStore.DatabaseStore[projectUrl])
-        CacheStore.DatabaseStore[projectUrl] = {};
-
-    const db = `${dbUrl}${dbName}`;
-
-    if (!CacheStore.DatabaseStore[projectUrl][db])
-        CacheStore.DatabaseStore[projectUrl][db] = {};
-}
-
-export const accessData = async (projectUrl, dbUrl, dbName, path = '', find, segment) => {
-    await awaitStore();
-    prepareDatabaseStore(projectUrl, dbUrl, dbName);
-
-    const d = _.get(CacheStore.DatabaseStore[projectUrl][db], transformCollectionPath(path)) || [],
-        output = d.filter(v => confirmFilterDoc(v, find));
-
-    return output;
-}
-
-export const addPendingWrites = async (projectUrl, dbUrl, dbName, writeId, value) => {
-    await awaitStore();
-
-    if (!CacheStore.PendingWrites[projectUrl])
-        CacheStore.PendingWrites[projectUrl] = {};
-
-    const db = `${dbUrl}${dbName}`;
-
-    if (!CacheStore.PendingWrites[projectUrl][db])
-        CacheStore.PendingWrites[projectUrl][db] = {};
-
-    CacheStore.PendingWrites[projectUrl][db][`${writeId}`] = { ...value };
-    updateCacheStore();
-}
-
-export const removePendingWrite = async (projectUrl, dbUrl, dbName, writeId) => {
-    await awaitStore();
-    if (CacheStore.PendingWrites[projectUrl]?.[`${dbUrl}${dbName}`]?.[`${writeId}`])
-        delete CacheStore.PendingWrites[projectUrl][`${dbUrl}${dbName}`][`${writeId}`];
-    updateCacheStore();
-}
-
-export const commitStore = async (projectUrl, dbUrl, dbName, path = '', value, filter, type = '') => {
-    if (type.startsWith('set')) {
-        (Array.isArray(value) ? value : [value]).forEach(e => {
-            if (!IS_RAW_OBJECT(e)) throw 'Expected a raw object value on set() operation';
-            if (!e._id) throw 'No _id found in set() operation mosquitodb';
-            updateDatabaseStore(projectUrl, dbUrl, dbName, path, { _id: e._id, value: deserializeData(e, undefined, type) });
-        });
-    } else {
-        if (value?._id) throw `You cannot change _id with ${type}() operation`;
-        if (type.startsWith('delete')) {
-            if (!!value) throw `Expected null or undefined on ${type}() operation`;
-        } else if (!IS_RAW_OBJECT(value)) throw `Expected a raw object value on ${type}() operation`;
-
-        const q = await accessData(projectUrl, dbUrl, dbName, path, filter);
-
-        if (type.endsWith('Many') || q.length === 1)
-            q.forEach(e => {
-                updateDatabaseStore(
-                    projectUrl,
-                    dbUrl,
-                    dbName,
-                    path,
-                    { _id: e._id, value: deserializeData(value, e, type) },
-                );
-            });
-    }
-}
-
-const deserializeData = (data, b4Data, type = '') => {
-    if (!data) return null;
-
-    const result = { ...((type.startsWith('update') || type.startsWith('merge')) ? b4Data : {}), ...data };
-
-    queryEntries(data, undefined).forEach(([key, value]) => {
-        if (key.endsWith('$timestamp')) {
-            _.set(result, key.split('.').filter((_, i, a) => i !== a.length).join('.'), { $timestamp: value === 'now' ? Date.now() : value });
-        } else if (key.endsWith('$increment')) {
-            if (type.startsWith('set')) throw `Cannot use field value INCREMENT() on set() operation`;
-            const path = key.split('.').filter((_, i, a) => i !== a.length).join('.');
-            if (b4Data) _.set(result, path, (_.get(b4Data, path) || 0) + value);
-        } else if (key.endsWith('$deletion')) {
-            const path = key.split('.').filter((_, i, a) => i !== a.length).join('.');
-            if (b4Data && _.get(b4Data, path)) _.unset(result, path);
-        } else _.set(result, key, value);
-    });
-
-    return result;
-}
-
-export const breakFilter = () => {
-
-}
-
-const testAll = (arr = [], test) => !!arr.filter(v => typeof v === 'string' && test.test(v)).length;

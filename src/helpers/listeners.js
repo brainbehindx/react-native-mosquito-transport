@@ -1,9 +1,8 @@
-import GlobalListener from "./GlobalListener";
+import SubscriptionListener from "subscription-listener";
 
-export const InitializedProject = {};
-export const AuthListener = new GlobalListener();
-export const AuthTokenListener = new GlobalListener();
-export const TokenRefreshListener = new GlobalListener();
-export const StoreReadyListener = new GlobalListener();
-export const ServerReachableListener = new GlobalListener();
-export const DatabaseRecordsListener = new GlobalListener();
+export const AuthListener = new SubscriptionListener();
+export const AuthTokenListener = new SubscriptionListener();
+export const TokenRefreshListener = new SubscriptionListener();
+export const StoreReadyListener = new SubscriptionListener();
+export const ServerReachableListener = new SubscriptionListener();
+export const DatabaseRecordsListener = new SubscriptionListener();

@@ -1,4 +1,5 @@
 import { ServerReachableListener } from "./listeners";
+import { AES, enc } from 'crypto-js';
 
 export const simplifyError = (error, message) => ({
     simpleError: { error, message }
@@ -22,7 +23,7 @@ export const oEntries = (obj, includeObj = true) => {
 
     Object.entries(obj).forEach(e => {
         o.push(e);
-        if (typeof e[1] === 'object' && !Array.isArray(e[1])) {
+        if (e[1] && typeof e[1] === 'object' && !Array.isArray(e[1])) {
             o = [...o, ...oEntries(e[1])];
         }
     });
@@ -30,23 +31,68 @@ export const oEntries = (obj, includeObj = true) => {
     return o.filter(v => includeObj || typeof v[1] !== 'object' || Array.isArray(v[1]));
 }
 
-export const IS_RAW_OBJECT = (e) => typeof e === 'object' && !Array.isArray(e);
+export const IS_RAW_OBJECT = (e) => e && typeof e === 'object' && !Array.isArray(e) && !(e instanceof Date);
 
 export const IS_WHOLE_NUMBER = (v) => typeof v === 'number' && !`${v}`.includes('.');
 
-export const queryEntries = (obj, lastPath = '', exceptions = []) => {
+export const IS_DECIMAL_NUMBER = (v) => typeof v === 'number' && `${v}`.includes('.');
+
+export const queryEntries = (obj, lastPath = '', exceptions = [], seperator = '.') => {
     let o = [];
+    const isArraySeperator = Array.isArray(lastPath);
 
     Object.entries(obj).forEach(([key, value]) => {
-        if (typeof value === 'object' && !Array.isArray(value) && !exceptions.includes(key)) {
-            o = [...o, ...queryEntries(value, `${lastPath}${key}.`)];
-        } else o.push([`${lastPath}${key}`, value]);
+        if (IS_RAW_OBJECT(value) && !exceptions.includes(key)) {
+            o = [
+                ...o,
+                ...queryEntries(
+                    value,
+                    isArraySeperator ? [...lastPath, key] : `${lastPath}${key}${seperator}`,
+                    exceptions,
+                    seperator
+                )
+            ];
+        } else o.push(isArraySeperator ? [[...lastPath, key], value] : [`${lastPath}${key}`, value]);
     });
 
     return o;
 }
 
-export const listenReachableServer = (callback, projectUrl) => ServerReachableListener.startKeyListener(projectUrl, t => {
+export const objToUniqueString = (obj) => {
+    const keys = [],
+        values = [];
+
+    if (Array.isArray(obj)) {
+        obj.forEach(e => {
+            if (IS_RAW_OBJECT(e)) {
+                queryEntries(e).map(([k, v]) => {
+                    keys.push(k);
+                    values.push(v);
+                });
+            } else keys.push(Array.isArray(e) ? JSON.stringify(e) : `${e}`);
+        });
+    } else if (!IS_RAW_OBJECT(obj))
+        return `${obj}`;
+    else
+        queryEntries(obj).map(([k, v]) => {
+            keys.push(k);
+            values.push(v);
+        });
+
+    return [
+        ...keys.sort(),
+        ...values.map(v => `${Array.isArray(v) ? JSON.stringify(v) : v}`).sort()
+    ].join(',');
+}
+
+export const cloneInstance = (v) => {
+    if (v && typeof v === 'object') {
+        return Array.isArray(v) ? [...v] : { ...v };
+    }
+    return v;
+}
+
+export const listenReachableServer = (callback, projectUrl) => ServerReachableListener.listenTo(projectUrl, t => {
     if (typeof t === 'boolean') callback?.(t);
 }, true);
 
@@ -61,4 +107,45 @@ export const prefixStoragePath = (path, prefix = 'file:///') => {
 export const getUrlExtension = (url) => {
     const r = url.split(/[#?]/)[0].split(".").pop().trim();
     return r === url ? '' : r;
+}
+
+export const niceTry = (promise) => new Promise(async resolve => {
+
+    try {
+        const r = await promise();
+        resolve(r);
+    } catch (e) { resolve(); }
+});
+
+export const shuffleArray = (n) => {
+    const array = [...n];
+    let currentIndex = array.length, randomIndex;
+
+    while (currentIndex != 0) {
+        randomIndex = Math.floor(Math.random() * currentIndex);
+        currentIndex--;
+
+        [array[currentIndex], array[randomIndex]] = [
+            array[randomIndex], array[currentIndex]
+        ];
+    }
+
+    return array;
+}
+
+export function sortArrayByObjectKey(arr = [], key) {
+    return arr.slice(0).sort(function (a, b) {
+        const left = getLodash(a, key),
+            right = getLodash(b, key);
+
+        return (left > right) ? 1 : (left < right) ? -1 : 0;
+    });
+}
+
+export const encryptString = (txt, password, iv) => {
+    return AES.encrypt(txt, `${password || ''}${iv || ''}`).toString();
+}
+
+export const decryptString = (txt, password, iv) => {
+    return AES.decrypt(txt, `${password || ''}${iv || ''}`).toString(enc.Utf8);
 }

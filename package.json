@@ -1,8 +1,8 @@
 {
   "name": "react-native-mosquitodb",
-  "version": "0.0.11",
+  "version": "0.0.14",
   "description": "React native javascript sdk for mosquitodb",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -27,10 +27,15 @@
   },
   "homepage": "https://github.com/deflexable/react-native-mosquitodb#readme",
   "dependencies": {
+    "@types/crypto-js": "^4.2.1",
     "@types/lodash": "^4.14.194",
     "base-64": "^1.0.0",
+    "buffer": "^6.0.3",
+    "crypto-js": "^4.2.0",
     "lodash": "^4.17.21",
-    "socket.io-client": "^4.6.2"
+    "react-native-get-random-values": "^1.9.0",
+    "socket.io-client": "^4.6.2",
+    "subscription-listener": "^1.0.9"
   },
   "engines": {
     "node": ">= 16.0.0"
