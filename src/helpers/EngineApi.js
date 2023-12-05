@@ -22,7 +22,13 @@ const apis = {
     _deleteFolder: (baseApi, ugly) => `${baseApi}/${ugly ? btoa(apis._deleteFolder(baseApi)) : '_deleteFolder'}`,
     staticStorage: (baseApi, ugly) => `${baseApi}/${ugly ? btoa(apis.staticStorage(baseApi)) : 'storage'}`,
     _documentCount: (baseApi, ugly) => `${baseApi}/${ugly ? btoa(apis._documentCount(baseApi)) : '_documentCount'}`,
-    _areYouOk: (baseApi, ugly) => `${baseApi}/${ugly ? btoa(apis._areYouOk(baseApi)) : '_areYouOk'}`
+    _areYouOk: (baseApi, ugly) => `${baseApi}/${ugly ? btoa(apis._areYouOk(baseApi)) : '_areYouOk'}`,
+    // static path
+    _listenCollection: '_listenCollection',
+    _listenDocument: '_listenDocument',
+    _startDisconnectWriteTask: '_startDisconnectWriteTask',
+    _cancelDisconnectWriteTask: '_cancelDisconnectWriteTask',
+    _listenUserVerification: '_listenUserVerification'
 };
 
 export default { ...apis };

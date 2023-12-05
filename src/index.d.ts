@@ -7,7 +7,7 @@ interface MosquitoDbConfig {
     accessKey: string;
     maxRetries?: number;
     /**
-     * setting this to true will encrypt all outgoing and incoming request. This is recommended for production applications
+     * setting this to true will encrypt all outgoing and incoming request. This is recommended for production applications to enable end-to-end re-encrypt using [AES](http://github.com/brix/crypto-js) and to prevent request interception by browser extensions or other hijacking tools
      */
     uglifyRequest?: boolean;
 }
@@ -34,6 +34,17 @@ interface ReleaseCacheOption {
     cacheProtocol?: 'async-storage' | 'reat-native-fs';
 }
 
+interface MosquitoDbSocket {
+    timeout: (timeout?: number) => ({
+        emitWithAck: (...args: any) => Promise<any>;
+    });
+    emit: (...args: any) => void;
+    emitWithAck: () => Promise<any>;
+    on: (route: string, callback?: () => any) => void;
+    once: (route: string, callback?: () => any) => void;
+    destroy: () => void;
+}
+
 export default class RNMosquitoDb {
     constructor(config: MosquitoDbConfig);
     static releaseCache(option?: ReleaseCacheOption): void;
@@ -43,6 +54,7 @@ export default class RNMosquitoDb {
     storage(): MosquitoDbStorage;
     fetchHttp(endpoint: string, init?: RequestInit, config?: FetchHttpConfig): Promise<Response>;
     listenReachableServer(callback: (reachable: boolean) => void): () => void;
+    getSocket(options: { disableAuth?: boolean }): MosquitoDbSocket;
 }
 
 interface MosquitoDbCollection {
@@ -189,13 +201,15 @@ interface GetConfig {
      * - 0: returns data that may have been internally updated locally with updateOne, updateMany, mergeOne, deleteOne, deleteMany, putOne, replaceOne
      * - 1: returns exact data which was cached in the last query process
      * 
-     * defaults to 0
+     * @defaults - 0
      * 
      * To learn and see more examples on this, Please visit https://brainbehindx.com/mosquitodb/docs/reading_data/retrieval
      */
     episode?: 0 | 1;
     /**
      * send authentication token along with this request
+     * 
+     * @default - false
      */
     disableAuth?: boolean;
     /**

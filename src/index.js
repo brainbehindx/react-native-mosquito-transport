@@ -1,18 +1,28 @@
 import 'react-native-get-random-values';
-import { IS_WHOLE_NUMBER, listenReachableServer } from "./helpers/peripherals";
+import { IS_WHOLE_NUMBER, encryptString, listenReachableServer } from "./helpers/peripherals";
 import { releaseCacheStore } from "./helpers/utils";
-import { Scoped } from "./helpers/variables";
+import { CacheStore, Scoped } from "./helpers/variables";
 import { MosquitoDbAuth } from "./products/auth";
 import { MosquitoDbCollection } from "./products/database";
 import { MosquitoDbStorage } from "./products/storage";
 import { ServerReachableListener, TokenRefreshListener } from "./helpers/listeners";
-import { initTokenRefresher, triggerAuth, triggerAuthToken } from "./products/auth/accessor";
+import { awaitRefreshToken, initTokenRefresher, listenToken, listenTokenReady, triggerAuth, triggerAuthToken } from "./products/auth/accessor";
 import { TIMESTAMP, DOCUMENT_EXTRACTION, FIND_GEO_JSON, GEO_JSON } from "./products/database/types";
 import { mfetch } from "./products/http_callable";
 import { io } from "socket.io-client";
 import { validateCollectionPath } from "./products/database/validator";
 import { CACHE_PROTOCOL } from "./helpers/values";
 import { trySendPendingWrite } from "./products/database/accessor";
+import EngineApi from './helpers/EngineApi';
+import { parse, stringify } from 'json-buffer';
+
+const {
+    _listenCollection,
+    _listenDocument,
+    _startDisconnectWriteTask,
+    _cancelDisconnectWriteTask,
+    _listenUserVerification
+} = EngineApi;
 
 class RNMosquitoDb {
     constructor(config) {
@@ -78,6 +88,159 @@ class RNMosquitoDb {
     storage = () => new MosquitoDbStorage({ ...this.config });
     fetchHttp = (endpoint, init, config) => mfetch(endpoint, init, { ...this.config, method: config });
     listenReachableServer = (callback) => listenReachableServer(callback, this.config.projectUrl);
+    getSocket = (configOpts) => {
+        const { disableAuth } = configOpts || {},
+            { projectUrl, uglify, accessKey } = this.config;
+
+        const restrictedRoute = [
+            _listenCollection,
+            _listenDocument,
+            _startDisconnectWriteTask,
+            _cancelDisconnectWriteTask,
+            _listenUserVerification
+        ];
+
+        let socketReadyCallback,
+            makeSocketCallback = () => new Promise(resolve => {
+                socketReadyCallback = resolve;
+            }),
+            socketReadyPromise = makeSocketCallback(),
+            socketListenerList = [],
+            socketListenerIte = 0;
+
+        let hasCancelled,
+            socket,
+            tokenListener;
+
+        const emit = ({ timeout, promise, emittion: emittionx }) => new Promise(async (resolve, reject) => {
+            const [route, ...emittion] = emittionx;
+
+            if (typeof route !== 'string')
+                throw `expected ${promise ? 'emitWithAck' : 'emit'} first argument to be a string type`;
+
+            if (restrictedRoute.includes(route))
+                throw `${route} is a restricted socket path, avoid using any of ${restrictedRoute}`;
+
+            let hasResolved, stime = Date.now();
+
+            const timer = isNaN(timeout) ? undefined : setTimeout(() => {
+                hasResolved = true;
+                reject(new Error('emittion timeout'));
+            }, timeout);
+
+            if (hasResolved) return;
+            clearTimeout(timer);
+            await socketReadyPromise;
+
+            try {
+                const h = isNaN(timeout) ? socket : socket.timeout(timeout - (Date.now() - stime)),
+                    { encryptionKey = accessKey } = CacheStore.AuthStore?.[projectUrl]?.tokenData || {};
+
+                const lastEmit = emittion.slice(-1)[0],
+                    mit = typeof lastEmit === 'function' ? emittion.slice(0, emittion.length - 1) : emittion;
+
+                const p = await h[promise ? 'emitWithAck' : 'emit'](route,
+                    uglify ? [
+                        encryptString(stringify(mit), accessKey, disableAuth ? accessKey : encryptionKey)
+                    ] : mit,
+                    typeof lastEmit === 'function' ? function () {
+                        lastEmit(...[...arguments]);
+                    } : undefined
+                );
+                resolve(promise ? p : undefined);
+            } catch (e) {
+                reject(e);
+            }
+        });
+
+        const init = async () => {
+            if (hasCancelled) return;
+
+            const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
+            socket = io(`ws://${projectUrl.split('://')[1]}`, {
+                auth: {
+                    ...mtoken ? { mtoken } : {},
+                    ugly: uglify,
+                    isOutsider: true,
+                    accessKey: encryptString(accessKey, accessKey, '_')
+                }
+            });
+
+            socketReadyCallback();
+            socketListenerList.forEach(([_, method, route, callback]) => {
+                socket[method](route, callback);
+            });
+        }
+
+        if (disableAuth) {
+            init();
+        } else {
+            let lastTokenStatus;
+
+            tokenListener = listenTokenReady(status => {
+                if (lastTokenStatus === (status || false)) return;
+
+                if (status === 'ready') {
+                    init();
+                } else {
+                    socket?.close?.();
+                    socket = undefined;
+                    socketReadyPromise = makeSocketCallback();
+                }
+                lastTokenStatus = status || false;
+            }, projectUrl);
+        }
+
+        return {
+            timeout: (timeout) => ({
+                emitWithAck: function () {
+                    return emit({
+                        timeout,
+                        promise: true,
+                        emittion: [...arguments]
+                    });
+                }
+            }),
+            emit: function () { emit({ emittion: [...arguments] }) },
+            emitWithAck: function () {
+                return emit({
+                    emittion: [...arguments],
+                    promise: true
+                });
+            },
+            on: async (route, callback) => {
+                if (restrictedRoute.includes(route))
+                    throw `${route} is a restricted socket path, avoid using any of ${restrictedRoute}`;
+                const ref = ++socketListenerIte;
+                socketListenerList.push([ref, 'on', route, callback]);
+                if (socket) socket.on(route, callback);
+
+                return () => {
+                    if (socket) socket.off(route, callback);
+                    socketListenerList = socketListenerList.filter(([id]) => id !== ref);
+                }
+            },
+            once: async (route, callback) => {
+                if (restrictedRoute.includes(route))
+                    throw `${route} is a restricted socket path, avoid using any of ${restrictedRoute}`;
+                const ref = ++socketListenerIte;
+                socketListenerList.push([ref, 'once', route, callback]);
+                if (socket) socket.once(route, callback);
+
+                return () => {
+                    if (socket) socket.off(route, callback);
+                    socketListenerList = socketListenerList.filter(([id]) => id !== ref);
+                }
+            },
+            destroy: () => {
+                hasCancelled = true;
+                tokenListener?.();
+                if (socket) socket.close();
+                socketListenerList = undefined;
+            }
+        }
+    }
+
     wipeDatabaseCache = () => {
 
     }

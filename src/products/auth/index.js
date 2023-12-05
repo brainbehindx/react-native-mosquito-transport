@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 import EngineApi from "../../helpers/EngineApi";
-import { AuthListener, AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
+import { AuthListener, TokenRefreshListener } from "../../helpers/listeners";
 import { awaitReachableServer, awaitStore, buildFetchInterface, simplifyError, updateCacheStore } from "../../helpers/utils";
 import { CacheConstant, CacheStore, Scoped } from "../../helpers/variables";
 import { awaitRefreshToken, initTokenRefresher, injectFreshToken, listenToken, triggerAuth, triggerAuthToken } from "./accessor";
@@ -90,11 +90,10 @@ export class MosquitoDbAuth {
     listenAuthToken = (callback) => listenToken(callback, this.builder.projectUrl);
 
     getAuthToken = () => new Promise(resolve => {
-        const l = AuthTokenListener.listenTo(this.builder.projectUrl, t => {
-            if (t === undefined) return;
+        const l = listenToken(t => {
             l();
             resolve(t || null);
-        }, true);
+        }, this.builder.projectUrl);
     });
 
     listenAuth = (callback) =>

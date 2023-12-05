@@ -5,7 +5,7 @@ import { CacheStore, Scoped } from "./variables";
 import { decryptString, encryptString, niceTry } from "./peripherals";
 
 export const updateCacheStore = () => {
-    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol } = Scoped.ReleaseCacheData;
+    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE } = Scoped.ReleaseCacheData;
 
     clearTimeout(Scoped.cacheStorageReducer);
     Scoped.cacheStorageReducer = setTimeout(() => {
