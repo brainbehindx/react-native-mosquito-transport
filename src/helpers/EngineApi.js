@@ -24,11 +24,11 @@ const apis = {
     _documentCount: (baseApi, ugly) => `${baseApi}/${ugly ? btoa(apis._documentCount(baseApi)) : '_documentCount'}`,
     _areYouOk: (baseApi, ugly) => `${baseApi}/${ugly ? btoa(apis._areYouOk(baseApi)) : '_areYouOk'}`,
     // static path
-    _listenCollection: '_listenCollection',
-    _listenDocument: '_listenDocument',
-    _startDisconnectWriteTask: '_startDisconnectWriteTask',
-    _cancelDisconnectWriteTask: '_cancelDisconnectWriteTask',
-    _listenUserVerification: '_listenUserVerification'
+    _listenCollection: (ugly) => `${ugly ? btoa(apis._listenCollection()) : '_listenCollection'}`,
+    _listenDocument: (ugly) => `${ugly ? btoa(apis._listenDocument()) : '_listenDocument'}`,
+    _startDisconnectWriteTask: (ugly) => `${ugly ? btoa(apis._startDisconnectWriteTask()) : '_startDisconnectWriteTask'}`,
+    _cancelDisconnectWriteTask: (ugly) => `${ugly ? btoa(apis._cancelDisconnectWriteTask()) : '_cancelDisconnectWriteTask'}`,
+    _listenUserVerification: (ugly) => `${ugly ? btoa(apis._listenUserVerification()) : '_listenUserVerification'}`
 };
 
 export default { ...apis };

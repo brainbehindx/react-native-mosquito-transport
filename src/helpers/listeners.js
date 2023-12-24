@@ -1,6 +1,5 @@
 import SubscriptionListener from "subscription-listener";
 
-export const AuthListener = new SubscriptionListener();
 export const AuthTokenListener = new SubscriptionListener();
 export const TokenRefreshListener = new SubscriptionListener();
 export const StoreReadyListener = new SubscriptionListener();

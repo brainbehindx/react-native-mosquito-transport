@@ -1,11 +1,19 @@
 import { io } from "socket.io-client";
 import EngineApi from "../../helpers/EngineApi";
-import { AuthListener, TokenRefreshListener } from "../../helpers/listeners";
+import { TokenRefreshListener } from "../../helpers/listeners";
 import { awaitReachableServer, awaitStore, buildFetchInterface, simplifyError, updateCacheStore } from "../../helpers/utils";
 import { CacheConstant, CacheStore, Scoped } from "../../helpers/variables";
-import { awaitRefreshToken, initTokenRefresher, injectFreshToken, listenToken, triggerAuth, triggerAuthToken } from "./accessor";
+import { awaitRefreshToken, initTokenRefresher, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
 import { encode as btoa } from 'base-64';
-import { decryptString } from "../../helpers/peripherals";
+import { deserializeE2E, serializeE2E, simplifyCaughtError } from "../../helpers/peripherals";
+
+const {
+    _listenUserVerification,
+    _signOut,
+    _customSignin,
+    _customSignup,
+    _googleSignin
+} = EngineApi;
 
 export class MosquitoDbAuth {
     constructor(config) {
@@ -14,9 +22,9 @@ export class MosquitoDbAuth {
 
     customSignin = (email, password) => doCustomSignin(this.builder, email, password);
 
-    customSignup = (email, password, name, metadata) => doCustomSignup(this.builder, email, password, name, metadata, this);
+    customSignup = (email, password, name, metadata) => doCustomSignup(this.builder, email, password, name, metadata);
 
-    googleSignin = (token) => doGoogleSignin(this.builder, token, this);
+    googleSignin = (token) => doGoogleSignin(this.builder, token);
 
     appleSignin() {
 
@@ -35,7 +43,7 @@ export class MosquitoDbAuth {
     }
 
     listenVerifiedStatus(callback, onError) {
-        const { projectUrl } = this.builder;
+        const { projectUrl, serverE2E_PublicKey, uglify, baseUrl } = this.builder;
 
         let socket, wasDisconnected, lastToken = Scoped.AuthJWTToken[projectUrl] || null, lastInitRef = 0;
 
@@ -48,21 +56,29 @@ export class MosquitoDbAuth {
                 return;
             }
             if (processID !== lastInitRef) return;
+            const mtoken = Scoped.AuthJWTToken[projectUrl],
+                [reqBuilder, [privateKey]] = serializeE2E({ mtoken }, undefined, serverE2E_PublicKey);
 
-            socket = io(`ws://${projectUrl.split('://')[1]}`, { auth: { mtoken: Scoped.AuthJWTToken[projectUrl] } });
+            socket = io(`ws://${baseUrl}`, {
+                auth: uglify ? {
+                    e2e: reqBuilder,
+                    _m_internal: true
+                } : { mtoken, _m_internal: true }
+            });
 
-            socket.emit("_listenUserVerification");
+            socket.emit(_listenUserVerification(uglify));
 
             socket.on("onVerificationChanged", ([err, verified]) => {
-                // if (err) socket.close();
-                const fatal = err ? (err?.simpleError || simplifyError('unexpected_error', `${err}`).simpleError) : undefined;
+                const fatal = err ? simplifyCaughtError(err).simpleError : undefined;
                 if (fatal) {
                     onError?.(fatal);
-                } else callback?.(verified);
+                } else {
+                    callback?.(uglify ? deserializeE2E(verified, serverE2E_PublicKey, privateKey) : verified);
+                }
             });
 
             socket.on('connect', () => {
-                if (wasDisconnected) socket.emit('_listenUserVerification');
+                if (wasDisconnected) socket.emit(_listenUserVerification(uglify));
             });
 
             socket.on('disconnect', () => {
@@ -96,18 +112,32 @@ export class MosquitoDbAuth {
         }, this.builder.projectUrl);
     });
 
-    listenAuth = (callback) =>
-        AuthListener.listenTo(this.builder.projectUrl, t => {
-            if (t === undefined) return;
-            callback?.(t || null);
-        }, true);
+    listenAuth = (callback) => {
+        let lastTrig;
+
+        return listenToken((t, initToken) => {
+            const { refreshToken } = CacheStore.AuthStore[projectUrl] || {};
+
+            if (
+                (!!t || null) !== lastTrig ||
+                initToken
+            ) callback(t ? {
+                ...parseToken(t),
+                tokenManager: {
+                    refreshToken,
+                    accessToken: t
+                }
+            } : null);
+
+            lastTrig = !!t || null;
+        }, this.builder.projectUrl);
+    }
 
     getAuth = () => new Promise(resolve => {
-        const l = AuthListener.listenTo(this.builder.projectUrl, t => {
-            if (t === undefined) return;
+        const l = this.listenAuth(d => {
             l();
-            resolve(t || null);
-        }, true);
+            resolve(d);
+        });
     });
 
     signOut = () => doSignOut(this.builder);
@@ -116,95 +146,123 @@ export class MosquitoDbAuth {
 }
 
 const doCustomSignin = (builder, email, password) => new Promise(async (resolve, reject) => {
-    const { projectUrl, accessKey, uglify } = builder;
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
 
     try {
         await awaitStore();
-        const f = await (await fetch(EngineApi._customSignin(projectUrl, uglify), buildFetchInterface({
-            body: { _: `${btoa(email)}</>${btoa(password)}` },
+        const [reqBuilder, [privateKey]] = buildFetchInterface({
+            body: { _: `${btoa(email)}.${btoa(password)}` },
             accessKey,
+            serverE2E_PublicKey,
             uglify
-        }))).json();
+        });
+
+        const f = await (await fetch(_customSignin(projectUrl, uglify), reqBuilder)).json();
         if (f.simpleError) throw f;
 
-        const r = uglify ? JSON.parse(decryptString(f.__, accessKey, accessKey)) : f;
-        resolve({ user: r.result.tokenData, token: r.result.token });
+        const r = uglify ? deserializeE2E(f.e2e, serverE2E_PublicKey, privateKey) : f;
+
+        resolve({
+            user: parseToken(r.result.token),
+            token
+        });
         await injectFreshToken(builder, r.result);
     } catch (e) {
-        reject(e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` });
+        reject(simplifyCaughtError(e).simpleError);
     }
 });
 
 const doCustomSignup = (builder, email, password, name, metadata) => new Promise(async (resolve, reject) => {
-    const { projectUrl, accessKey, uglify } = builder;
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
 
     try {
         await awaitStore();
-        const f = await (await fetch(EngineApi._customSignup(projectUrl), buildFetchInterface({
+        const [reqBuilder, [privateKey]] = buildFetchInterface({
             body: {
-                _: `${btoa(email)}</>${btoa(password)}</>${(btoa(name || '').trim())}`,
+                _: `${btoa(email)}.${btoa(password)}.${(btoa(name || '').trim())}`,
                 metadata,
             },
             accessKey,
+            serverE2E_PublicKey,
             uglify
-        }))).json();
+        });
+
+        const f = await (await fetch(_customSignup(projectUrl, uglify), reqBuilder)).json();
         if (f.simpleError) throw f;
 
-        const r = uglify ? JSON.parse(decryptString(f.__, accessKey, accessKey)) : f;
+        const r = uglify ? deserializeE2E(f.e2e, serverE2E_PublicKey, privateKey) : f;
 
-        resolve({ user: r.result.tokenData, token: r.result.token });
+        resolve({
+            user: parseToken(r.result.token),
+            token: r.result.token
+        });
         await injectFreshToken(builder, r.result);
     } catch (e) {
-        reject(e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` });
+        reject(simplifyCaughtError(e).simpleError);
     }
 });
 
 export const doSignOut = async (builder) => {
     await awaitStore();
-    const { projectUrl, accessKey, uglify } = builder,
-        lastestToken = Scoped.AuthJWTToken[projectUrl];
+    TokenRefreshListener.dispatch(projectUrl);
+
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder,
+        { token, refreshToken: r_token } = CacheStore.AuthStore[projectUrl];
 
     if (CacheStore.AuthStore[projectUrl]) delete CacheStore.AuthStore[projectUrl];
-    if (lastestToken) delete Scoped.AuthJWTToken[projectUrl];
+    if (token) delete Scoped.AuthJWTToken[projectUrl];
     Object.keys(CacheConstant).forEach(e => {
         CacheStore[e] = CacheConstant[e];
-    })
-    triggerAuth(projectUrl);
+    });
     triggerAuthToken(projectUrl);
     updateCacheStore();
+    initTokenRefresher(builder);
 
-    if (lastestToken) {
+    if (token) {
         TokenRefreshListener.dispatch(projectUrl, 'ready');
         try {
             await awaitReachableServer(projectUrl);
-            const r = await (await fetch(EngineApi._signOut(projectUrl, uglify), buildFetchInterface({
-                body: { _: lastestToken },
-                accessKey
-            }))).json();
+
+            const [reqBuilder] = buildFetchInterface({
+                body: { token, r_token },
+                accessKey,
+                uglify,
+                serverE2E_PublicKey
+            });
+
+            const r = await (await fetch(_signOut(projectUrl, uglify), reqBuilder)).json();
             if (r.simpleError) throw r;
         } catch (e) {
-            throw e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` };
+            throw simplifyCaughtError(e).simpleError;
         }
     }
 }
 
 const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) => {
-    const { projectUrl, accessKey, uglify } = builder;
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
 
     try {
         await awaitStore();
-        const r = await (await fetch(EngineApi._googleSignin(projectUrl, uglify), buildFetchInterface({
-            body: { _: token },
-            accessKey
-        }))).json();
+        const [reqBuilder, [privateKey]] = buildFetchInterface({
+            body: { token },
+            accessKey,
+            uglify,
+            serverE2E_PublicKey
+        });
+
+        const r = await (await fetch(_googleSignin(projectUrl, uglify), reqBuilder)).json();
         if (r.simpleError) throw r;
 
-        const f = uglify ? JSON.parse(decryptString(r.__, accessKey, accessKey)) : r;
+        const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
 
-        resolve({ user: f.result.tokenData, token: f.result.token, isNewUser: f.isNewUser });
+        resolve({
+            user: parseToken(f.result.token),
+            token: f.result.token,
+            isNewUser: f.isNewUser
+        });
         await injectFreshToken(builder, f.result);
     } catch (e) {
-        reject(e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` });
+        reject(simplifyCaughtError(e).simpleError);
     }
 });
 

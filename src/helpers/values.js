@@ -45,8 +45,8 @@ export const WRITE_OPS = {
     $MUL: '$mul',
     $RENAME: '$rename'
     // $SET_ON_INSERT: '$setOnInsert'
-},
-    WRITE_OPS_LIST = Object.values(WRITE_OPS);
+};
+export const WRITE_OPS_LIST = Object.values(WRITE_OPS);
 
 export const READ_OPS = {
     $IN: '$in',
@@ -64,5 +64,9 @@ export const READ_OPS = {
     $TYPE: '$type',
     $SIZE: '$size',
     // $NE: '$ne'
-},
-    READ_OPS_LIST = Object.values(READ_OPS);
+};
+export const READ_OPS_LIST = Object.values(READ_OPS);
+
+export const Regexs = {
+    LINK: () => /(\b(https?|ftp):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig
+}

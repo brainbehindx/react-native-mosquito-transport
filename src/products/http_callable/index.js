@@ -1,16 +1,44 @@
 import { Buffer } from "buffer";
-import { cloneInstance, decryptString, encryptString, listenReachableServer, niceTry, objToUniqueString, simplifyCaughtError } from "../../helpers/peripherals";
+import { cloneInstance, deserializeE2E, listenReachableServer, objToUniqueString, serializeE2E, simplifyCaughtError } from "../../helpers/peripherals";
 import { awaitStore, getReachableServer, updateCacheStore, validateRequestMethod } from "../../helpers/utils";
-import { RETRIEVAL } from "../../helpers/values";
+import { RETRIEVAL, Regexs } from "../../helpers/values";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { awaitRefreshToken } from "../auth/accessor";
 
+const buildFetchData = (data) => {
+    const { ok, type, status, statusText, redirected, url, headers, base64, builderCred } = data;
+    const { uglified, encKey, serverKey } = builderCred;
+
+    const h = {
+        arrayBuffer: async () => Buffer.from(base64, 'base64'),
+        json: async () => JSON.parse(await h.text()),
+        text: async () => {
+            const txt = Buffer.from(base64, 'base64').toString('utf8');
+
+            if (uglified) {
+                const json = deserializeE2E(txt, serverKey, encKey);
+                return `${json}`;
+            } else return txt;
+        },
+        clone: () => ({ ...h }),
+        type,
+        status,
+        statusText,
+        redirected,
+        url,
+        ok,
+        headers: new Headers({ ...headers }),
+    };
+
+    return h;
+}
+
 export const mfetch = async (input = '', init = {}, config) => {
-    const { projectUrl, apiUrl, method, maxRetries = 7, disableCache, accessKey, uglify } = config;
+    const { projectUrl, apiUrl, serverE2E_PublicKey, method, maxRetries = 7, disableCache, accessKey, uglify } = config;
     validateRequestMethod(method);
 
-    const { retrieval = RETRIEVAL.DEFAULT, enableMinimizer } = method || {},
-        isBaseUrl = input.includes('://'),
+    const { retrieval = RETRIEVAL.DEFAULT, enableMinimizer, rawApproach } = method || {},
+        isBaseUrl = Regexs.LINK().test(input),
         disableAuth = method?.disableAuth || isBaseUrl,
         shouldCache = (retrieval === RETRIEVAL.DEFAULT ? !disableCache : true) &&
             retrieval !== RETRIEVAL.NO_CACHE_NO_AWAIT,
@@ -19,14 +47,14 @@ export const mfetch = async (input = '', init = {}, config) => {
             jij: { disableAuth: !!disableAuth, url: input, projectUrl, retrieval }
         });
 
-    if (init?.headers?.mtoken)
+    if ('mtoken' in (init?.headers))
         throw '"mtoken" in header is a reserved prop';
 
-    if (init?.headers?.uglified)
+    if ('uglified' in (init?.headers || {}))
         throw '"uglified" in header is a reserved prop';
 
-    if (input.startsWith(projectUrl))
-        throw `makeRequest can not starts with projectUrl:"${projectUrl}"`;
+    if (input.startsWith(projectUrl) && !rawApproach)
+        throw `fetchHttp first argument can not starts with projectUrl:"${projectUrl}", please set {rawApproach: true} if you're trying to access this url as it is`;
 
     if (!isBaseUrl && init.body && typeof init.body !== 'string')
         throw `"body" must be a string value`;
@@ -57,25 +85,10 @@ export const mfetch = async (input = '', init = {}, config) => {
         await awaitStore();
         const reqData = CacheStore.FetchedStore[reqId],
             resolveCache = () => {
-                const { ok, type, status, statusText, redirected, url, headers, base64, json } = reqData;
-                const bj = {
-                    arrayBuffer: async () => Buffer.from(base64, 'base64'),
-                    json: async () => JSON.parse(json),
-                    text: async () => {
-                        const txt = Buffer.from(base64, 'base64').toString('utf8');
-                        return txt;
-                    },
-                    clone: () => ({ ...bj }),
-                    type,
-                    status,
-                    statusText, redirected,
-                    url,
-                    ok,
-                    headers: new Headers({ ...headers }),
+                finalize({
+                    ...buildFetchData(reqData),
                     fromCache: true
-                };
-
-                finalize(bj);
+                });
             };
 
         try {
@@ -104,37 +117,42 @@ export const mfetch = async (input = '', init = {}, config) => {
             if (!disableAuth && await getReachableServer(projectUrl))
                 await awaitRefreshToken(projectUrl);
 
-            const { encryptionKey = accessKey } = CacheStore.AuthStore?.[projectUrl]?.tokenData || {},
-                mtoken = Scoped.AuthJWTToken[projectUrl],
-                uglified = (!isBaseUrl && init?.body && typeof init?.body === 'string' && uglify);
+            const mtoken = Scoped.AuthJWTToken[projectUrl],
+                uglified = (!isBaseUrl && init?.body && typeof init?.body === 'string' && uglify),
+                initType = extractHeaderItem('content-type', init?.headers);
+
+            const [reqBuilder, [privateKey]] = (uglified && isBaseUrl) ? serializeE2E(init.body, mtoken, serverE2E_PublicKey) : [null, []];
 
             const f = await fetch(isBaseUrl ? input : `${apiUrl}/${input}`, {
                 ...isBaseUrl ? {} : { method: 'POST' },
                 ...init,
-                ...uglified
-                    ? { body: { __: encryptString(init.body, accessKey, disableAuth ? accessKey : encryptionKey) } } : {},
+                ...uglified ? { body: reqBuilder } : {},
                 cache: 'no-cache',
                 headers: {
                     ...isBaseUrl ? {} : { 'Content-type': 'application/json' },
                     ...init?.headers,
-                    ...uglified ? { uglified } : {},
-                    ...((disableAuth || !mtoken) ? {} : { mtoken }),
-                    ...isBaseUrl ? {} : { authorization: `Bearer ${encryptString(accessKey, accessKey, '_')}` }
+                    ...uglified ? {
+                        uglified,
+                        'Content-type': 'text/plain',
+                        ...initType ? { 'init-content-type': initType } : {}
+                    } : {},
+                    ...((disableAuth || !mtoken || uglified || isBaseUrl) ? {} : { mtoken }),
+                    ...isBaseUrl ? {} : { authorization: `Bearer ${accessKey}` }
                 }
             }),
                 { ok, type, status, statusText, redirected, url, headers } = f,
-                simple = headers.get('simple_error'),
-                [arrayBuffer, json] = await Promise.all([
-                    niceTry(() => f.clone().arrayBuffer()),
-                    niceTry(async () => {
-                        const j = await f.clone().json(),
-                            json = uglified ? JSON.parse(decryptString(j.__, accessKey, disableAuth ? accessKey : encryptionKey)) : j;
-                        return JSON.stringify(json);
-                    })
-                ]),
-                base64 = arrayBuffer ? Buffer.from(arrayBuffer).toString('base64') : '',
+                simple = headers.get('simple_error');
+
+            if (!isBaseUrl && simple) throw { simpleError: JSON.parse(simple) };
+
+            const base64 = Buffer.from(await f.arrayBuffer()).toString('base64'),
                 resObj = {
-                    json,
+                    builderCred: {
+                        uglified,
+                        encKey: privateKey,
+                        serverKey: serverE2E_PublicKey
+                    },
+                    base64,
                     type,
                     status,
                     statusText,
@@ -144,26 +162,12 @@ export const mfetch = async (input = '', init = {}, config) => {
                     headers: headerObj(headers)
                 };
 
-            if (!isBaseUrl && simple) throw { simpleError: JSON.parse(simple) };
-
             if (shouldCache) {
-                CacheStore.FetchedStore[reqId] = { ...resObj, base64 };
+                CacheStore.FetchedStore[reqId] = { ...resObj };
                 updateCacheStore();
             }
 
-            const cloneObj = {
-                ...resObj,
-                headers: new Headers(resObj.headers),
-                arrayBuffer: async () => Buffer.from(base64, 'base64'),
-                json: async () => JSON.parse(json),
-                text: async () => {
-                    const txt = Buffer.from(base64, 'base64').toString('utf8');
-                    return txt;
-                },
-                clone: () => ({ ...cloneObj })
-            };
-
-            finalize(cloneObj);
+            finalize(buildFetchData(resObj));
         } catch (e) {
             if (e?.simpleError) {
                 finalize(undefined, e.simpleError);
@@ -206,6 +210,14 @@ export const mfetch = async (input = '', init = {}, config) => {
     const r = await callFetch();
     return r;
 };
+
+const extractHeaderItem = (t = '', header) => {
+    let k;
+    Object.entries(header || {}).forEach(([key, value]) => {
+        if (key.toLowerCase() === t.toLowerCase()) k = value;
+    });
+    return k;
+}
 
 const headerObj = (header) => {
     const h = {};

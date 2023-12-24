@@ -1,5 +1,7 @@
+import { Buffer } from "buffer";
 import { ServerReachableListener } from "./listeners";
 import { AES, enc } from 'crypto-js';
+import { box, randomBytes } from 'tweetnacl';
 
 export const simplifyError = (error, message) => ({
     simpleError: { error, message }
@@ -148,4 +150,39 @@ export const encryptString = (txt, password, iv) => {
 
 export const decryptString = (txt, password, iv) => {
     return AES.decrypt(txt, `${password || ''}${iv || ''}`).toString(enc.Utf8);
+}
+
+export const serializeE2E = (data, auth_token, serverPublicKey) => {
+    const pair = box.keyPair(),
+        nonce = randomBytes(box.nonceLength),
+        pubBase64 = Buffer.from(pair.publicKey).toString('base64'),
+        nonceBase64 = Buffer.from(nonce).toString('base64');
+
+    return [
+        `${pubBase64}.${nonceBase64}.${Buffer.from(
+            box(
+                Buffer.from(JSON.stringify([
+                    data,
+                    auth_token
+                ]), 'utf8'),
+                nonce,
+                Buffer.from(serverPublicKey, 'base64'),
+                pair.secretKey
+            )
+        ).toString('base64')}`,
+        [pair.secretKey, pair.publicKey]
+    ];
+}
+
+export const deserializeE2E = (data, serverPublicKey, clientPrivateKey) => {
+    const [binaryNonce, binaryData] = data.split('.'),
+        baseArray = box.open(
+            Buffer.from(binaryData, 'base64'),
+            Buffer.from(binaryNonce, 'base64'),
+            Buffer.from(serverPublicKey, 'base64'),
+            clientPrivateKey
+        );
+
+    if (!baseArray) throw 'Decrypting e2e message failed';
+    return JSON.parse(Buffer.from(baseArray).toString('utf8'))[0];
 }

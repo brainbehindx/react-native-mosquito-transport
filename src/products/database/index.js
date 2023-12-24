@@ -1,7 +1,7 @@
 import { io } from "socket.io-client";
 import EngineApi from "../../helpers/EngineApi";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
-import { IS_WHOLE_NUMBER, cloneInstance, decryptString, encryptString, listenReachableServer, niceTry, simplifyCaughtError } from "../../helpers/peripherals";
+import { IS_WHOLE_NUMBER, cloneInstance, deserializeE2E, listenReachableServer, niceTry, serializeE2E, simplifyCaughtError } from "../../helpers/peripherals";
 import { awaitStore, buildFetchInterface, getReachableServer } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { addPendingWrites, generateRecordID, getRecord, insertRecord, listenQueryEntry, removePendingWrite } from "./accessor";
@@ -94,12 +94,24 @@ export class MosquitoDbCollection {
     deleteOne = (find, config) => commitData({ ...this.builder, find }, null, 'deleteOne', config);
 
     deleteMany = (find, config) => commitData({ ...this.builder, find }, null, 'deleteMany', config);
-
-    // writeBatchMap = (map) => commitData({ ...this.builder, find }, map, 'writeBatchMap');
 }
 
+export const batchWrite = (map, config) => commitData({ ...this.builder }, map, 'batchWrite', config);
+
+const {
+    _listenCollection,
+    _listenDocument,
+    _startDisconnectWriteTask,
+    _cancelDisconnectWriteTask,
+    _documentCount,
+    _readDocument,
+    _queryCollection,
+    _writeDocument,
+    _writeMapDocument
+} = EngineApi;
+
 const listenDocument = (callback, onError, builder, config) => {
-    const { projectUrl, dbUrl, dbName, accessKey, path, disableCache, command, uglify } = builder,
+    const { projectUrl, serverE2E_PublicKey, baseUrl, dbUrl, dbName, accessKey, path, disableCache, command, uglify } = builder,
         { find, findOne, sort, direction, limit } = command,
         { disableAuth } = config || {},
         accessId = generateRecordID(builder, config),
@@ -137,30 +149,41 @@ const listenDocument = (callback, onError, builder, config) => {
 
         const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
             authObj = {
-                commands: { config, path, find: findOne || find, sort, direction, limit },
+                commands: {
+                    config,
+                    path,
+                    find: findOne || find,
+                    sort,
+                    direction,
+                    limit
+                },
                 dbName,
                 dbUrl
-            },
-            { encryptionKey = accessKey } = CacheStore.AuthStore?.[projectUrl]?.tokenData || {};
+            };
 
-        socket = io(`ws://${projectUrl.split('://')[1]}`, {
-            auth: {
+        const [encPlate, [privateKey]] = serializeE2E({ accessKey, _body: authObj }, mtoken, serverE2E_PublicKey);
+
+        socket = io(`ws://${baseUrl}`, {
+            auth: uglify ? { e2e: encPlate, _m_internal: true } : {
+                accessKey,
+                _body: authObj,
                 ...mtoken ? { mtoken } : {},
-                ugly: uglify,
-                accessKey: encryptString(accessKey, accessKey, '_'),
-                __: uglify ? encryptString(JSON.stringify(authObj), accessKey, disableAuth ? accessKey : encryptionKey) : authObj
+                _m_internal: true
             }
         });
 
-        socket.emit(findOne ? '_listenDocument' : '_listenCollection');
+        socket.emit((findOne ? _listenDocument : _listenCollection)(uglify));
         socket.on('mSnapshot', async ([err, snapshot]) => {
             hasRespond = true;
             if (err) {
                 onError?.(simplifyCaughtError(err).simpleError);
-            } else callback?.(snapshot);
+            } else {
+                if (uglify) snapshot = deserializeE2E(snapshot, serverE2E_PublicKey, privateKey);
+                callback?.(snapshot);
 
-            if (shouldCache)
-                insertRecord(builder, accessId, { sort, direction, limit, find, findOne, config }, snapshot);
+                if (shouldCache)
+                    insertRecord(builder, accessId, { sort, direction, limit, find, findOne, config }, snapshot);
+            }
         });
 
         socket.on('connect', () => {
@@ -194,7 +217,7 @@ const listenDocument = (callback, onError, builder, config) => {
 }
 
 const initOnDisconnectionTask = (builder, value, type) => {
-    const { projectUrl, dbUrl, dbName, accessKey, path, command, uglify } = builder,
+    const { projectUrl, baseUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, path, command, uglify } = builder,
         { find } = command || {},
         disableAuth = false;
 
@@ -215,21 +238,23 @@ const initOnDisconnectionTask = (builder, value, type) => {
                 commands: { path, find, value, scope: type },
                 dbName,
                 dbUrl
-            },
-            { encryptionKey = accessKey } = CacheStore.AuthStore?.[projectUrl]?.tokenData || {};
+            };
 
-        socket = io(`ws://${projectUrl.split('://')[1]}`, {
-            auth: {
+        socket = io(`ws://${baseUrl}`, {
+            auth: uglify ? {
+                e2e: serializeE2E(authObj, mtoken, serverE2E_PublicKey)[0],
+                _m_internal: true
+            } : {
                 ...mtoken ? { mtoken } : {},
-                accessKey: encryptString(accessKey, accessKey, '_'),
-                ugly: uglify,
-                __: uglify ? encryptString(JSON.stringify(authObj), accessKey, disableAuth ? accessKey : encryptionKey) : authObj
+                accessKey,
+                _body: authObj,
+                _m_internal: true
             }
         });
-        socket.emit('_startDisconnectWriteTask');
+        socket.emit(_startDisconnectWriteTask(uglify));
 
         socket.on('connect', () => {
-            if (wasDisconnected) socket.emit('_startDisconnectWriteTask');
+            if (wasDisconnected) socket.emit(_startDisconnectWriteTask(uglify));
         });
 
         socket.on('disconnect', () => {
@@ -242,7 +267,7 @@ const initOnDisconnectionTask = (builder, value, type) => {
     const tokenListener = listenToken(async t => {
         if ((t || null) !== lastToken) {
             if (socket) {
-                await niceTry(() => socket.timeout(10000).emitWithAck('_cancelDisconnectWriteTask'));
+                await niceTry(() => socket.timeout(10000).emitWithAck(_cancelDisconnectWriteTask(uglify)));
                 socket.close();
             }
             wasDisconnected = undefined;
@@ -256,7 +281,7 @@ const initOnDisconnectionTask = (builder, value, type) => {
         tokenListener();
         if (socket)
             (async () => {
-                await niceTry(() => socket.timeout(10000).emitWithAck('_cancelDisconnectWriteTask'));
+                await niceTry(() => socket.timeout(10000).emitWithAck(_cancelDisconnectWriteTask(uglify)));
                 socket.close();
             })();
         hasCancelled = true;
@@ -264,7 +289,7 @@ const initOnDisconnectionTask = (builder, value, type) => {
 }
 
 const countCollection = async (builder, config) => {
-    const { projectUrl, dbUrl, dbName, accessKey, maxRetries = 7, uglify, path, disableCache, command = {} } = builder,
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, uglify, path, disableCache, command = {} } = builder,
         { find } = command,
         { disableAuth } = config || {},
         accessId = generateRecordID({ ...builder, countDoc: true }, config);
@@ -295,8 +320,7 @@ const countCollection = async (builder, config) => {
         try {
             if (!disableAuth && await getReachableServer(projectUrl)) await awaitRefreshToken(projectUrl);
 
-            const { encryptionKey = accessKey } = CacheStore.AuthStore?.[projectUrl]?.tokenData || {};
-            const r = await (await fetch(EngineApi._documentCount(projectUrl, uglify), buildFetchInterface({
+            const [reqBuilder, [privateKey]] = buildFetchInterface({
                 body: {
                     commands: { path, find },
                     dbName,
@@ -304,12 +328,14 @@ const countCollection = async (builder, config) => {
                 },
                 accessKey,
                 ...disableAuth ? {} : { authToken: Scoped.AuthJWTToken[projectUrl] },
-                projectUrl,
+                serverE2E_PublicKey,
                 uglify
-            }))).json();
+            });
+
+            const r = await (await fetch(_documentCount(projectUrl, uglify), reqBuilder)).json();
             if (r.simpleError) throw r;
 
-            const f = uglify ? JSON.parse(decryptString(r.__, accessKey, disableAuth ? accessKey : encryptionKey)) : r;
+            const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
 
             if (!disableCache)
                 setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl || DEFAULT_DB_URL, dbName || DEFAULT_DB_NAME, accessId], f.result);
@@ -319,7 +345,7 @@ const countCollection = async (builder, config) => {
             const b4Data = setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl || DEFAULT_DB_URL, dbName || DEFAULT_DB_NAME, accessId]);
 
             if (e?.simpleError) {
-                finalize(undefined, e?.simpleError);
+                finalize(undefined, e.simpleError);
             } else if (!disableCache && !isNaN(b4Data)) {
                 finalize(b4Data);
             } else if (retries > maxRetries) {
@@ -343,7 +369,7 @@ const countCollection = async (builder, config) => {
 }
 
 const findObject = async (builder, config) => {
-    const { projectUrl, dbUrl, dbName, accessKey, maxRetries = 7, path, disableCache, uglify, command } = builder,
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, disableCache, uglify, command } = builder,
         { find, findOne, sort, direction, limit, random } = command,
         { retrieval = RETRIEVAL.DEFAULT, episode = 0, disableAuth, disableMinimizer } = config || {},
         enableMinimizer = !disableMinimizer,
@@ -417,9 +443,7 @@ const findObject = async (builder, config) => {
             if (!disableAuth && await getReachableServer(projectUrl))
                 await awaitRefreshToken(projectUrl);
 
-            const { encryptionKey = accessKey } = CacheStore.AuthStore?.[projectUrl]?.tokenData || {};
-
-            const r = await (await fetch(EngineApi[findOne ? '_readDocument' : '_queryCollection'](projectUrl, uglify), buildFetchInterface({
+            const [reqBuilder, [privateKey]] = buildFetchInterface({
                 body: {
                     commands: { config, path, find: findOne || find, sort, direction, limit, random },
                     dbName,
@@ -427,12 +451,14 @@ const findObject = async (builder, config) => {
                 },
                 accessKey,
                 authToken: disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
-                projectUrl,
+                serverE2E_PublicKey,
                 uglify
-            }))).json();
+            });
+
+            const r = await (await fetch((findOne ? _readDocument : _queryCollection)(projectUrl, uglify), reqBuilder)).json();
             if (r.simpleError) throw r;
 
-            const f = uglify ? JSON.parse(decryptString(r.__, accessKey, disableAuth ? accessKey : encryptionKey)) : r;
+            const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
 
             if (shouldCache) insertRecord(builder, accessId, { ...command, config }, f.result);
             finalize({ liveResult: f.result || null });
@@ -472,9 +498,10 @@ const findObject = async (builder, config) => {
 };
 
 const commitData = async (builder, value, type, config) => {
-    const { projectUrl, dbUrl, dbName, accessKey, maxRetries = 7, path, find, disableCache, uglify } = builder,
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, find, disableCache, uglify } = builder,
         { disableAuth, delivery = DELIVERY.DEFAULT } = config || {},
         writeId = `${Date.now() + ++Scoped.PendingIte}`,
+        isBatchWrite = type === 'batchWrite',
         shouldCache = (delivery === DELIVERY.DEFAULT ? !disableCache : true) &&
             delivery !== DELIVERY.NO_CACHE &&
             delivery !== DELIVERY.NO_AWAIT_NO_CACHE &&
@@ -483,6 +510,7 @@ const commitData = async (builder, value, type, config) => {
     await awaitStore();
     if (shouldCache) {
         validateCollectionPath(path);
+        // TODO: batchWrite
         validateWriteValue(value, builder.find, type);
         await addPendingWrites(builder, writeId, { value, type, find });
     }
@@ -511,27 +539,30 @@ const commitData = async (builder, value, type, config) => {
         try {
             if (!disableAuth && await getReachableServer(projectUrl))
                 await awaitRefreshToken(projectUrl);
-            const { encryptionKey = accessKey } = CacheStore.AuthStore?.[projectUrl]?.tokenData || {};
 
-            const r = await (await fetch(EngineApi['_writeDocument'](projectUrl, uglify), buildFetchInterface({
+            const [reqBuilder, [privateKey]] = buildFetchInterface({
                 body: {
                     commands: {
-                        path,
-                        scope: type,
                         value,
-                        find
+                        ...isBatchWrite ? {} : {
+                            path,
+                            scope: type,
+                            find
+                        }
                     },
                     dbName,
                     dbUrl
                 },
                 accessKey,
-                projectUrl,
+                serverE2E_PublicKey,
                 authToken: disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
                 uglify
-            }))).json();
+            });
+
+            const r = await (await fetch((isBatchWrite ? _writeMapDocument : _writeDocument)(projectUrl, uglify), reqBuilder)).json();
             if (r.simpleError) throw r;
 
-            const f = uglify ? JSON.parse(decryptString(r.__, accessKey, disableAuth ? accessKey : encryptionKey)) : r;
+            const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
 
             finalize({ status: 'sent', committed: f.committed }, undefined, { removeCache: true });
         } catch (e) {

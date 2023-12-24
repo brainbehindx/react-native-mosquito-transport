@@ -7,9 +7,9 @@ interface MosquitoDbConfig {
     accessKey: string;
     maxRetries?: number;
     /**
-     * setting this to true will encrypt all outgoing and incoming request. This is recommended for production applications to enable end-to-end re-encrypt using [AES](http://github.com/brix/crypto-js) and to prevent request interception by browser extensions or other hijacking tools
+     * setting this to true will encrypt all outgoing and incoming request. This is recommended for production applications to enable end-to-end encryption using [Tweetnacl](https://github.com/dchest/tweetnacl-js) and to prevent request interception by browser extensions, network intermediaries or other hijacking tools
      */
-    uglifyRequest?: boolean;
+    enableE2E_Encryption?: boolean;
 }
 
 interface GetDatabase {

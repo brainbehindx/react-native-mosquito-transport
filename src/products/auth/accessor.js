@@ -1,9 +1,11 @@
+import setLargeTimeout from "set-large-timeout";
 import { doSignOut } from ".";
 import EngineApi from "../../helpers/EngineApi";
-import { AuthListener, AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
-import { listenReachableServer } from "../../helpers/peripherals";
+import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
+import { deserializeE2E, listenReachableServer, simplifyCaughtError } from "../../helpers/peripherals";
 import { awaitReachableServer, awaitStore, buildFetchInterface, simplifyError, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
+import { decode as atob } from 'base-64';
 
 export const listenToken = (callback, projectUrl) =>
     AuthTokenListener.listenTo(projectUrl, t => {
@@ -19,20 +21,15 @@ export const injectFreshToken = async (config, obj) => {
     Scoped.AuthJWTToken[projectUrl] = obj.token;
     updateCacheStore();
 
-    triggerAuth(projectUrl);
     triggerAuthToken(projectUrl);
     initTokenRefresher(config);
 }
 
-export const triggerAuth = async (projectUrl) => {
-    await awaitStore();
-    const l = CacheStore.AuthStore[projectUrl]?.tokenData;
-    AuthListener.dispatch(projectUrl, l ? { ...l } : null);
-}
+export const parseToken = (token) => JSON.parse(atob(token.split('.')[1]));
 
-export const triggerAuthToken = async (projectUrl) => {
+export const triggerAuthToken = async (projectUrl, isInit) => {
     await awaitStore();
-    AuthTokenListener.dispatch(projectUrl, CacheStore.AuthStore[projectUrl]?.token || null);
+    AuthTokenListener.dispatch(projectUrl, CacheStore.AuthStore[projectUrl]?.token || null, isInit);
 }
 
 export const awaitRefreshToken = (projectUrl) => new Promise(resolve => {
@@ -49,22 +46,24 @@ export const listenTokenReady = (callback, projectUrl) => TokenRefreshListener.l
 export const initTokenRefresher = async (config, forceRefresh) => {
     const { projectUrl, maxRetries } = config;
     await awaitStore();
-    const l = CacheStore.AuthStore[projectUrl]?.tokenData;
-    clearTimeout(Scoped.TokenRefreshTimer[projectUrl]);
+    const { token } = CacheStore.AuthStore[projectUrl] || {},
+        tokenInfo = token ? parseToken(token) : undefined;
 
-    if (l) {
-        const hasExpire = Date.now() >= l.expOn - 60000,
-            rizz = () => refreshToken(config, ++Scoped.LastTokenRefreshRef[projectUrl], maxRetries, maxRetries);
+    Scoped.TokenRefreshTimer[projectUrl]?.();
+
+    if (token) {
+        const hasExpire = Date.now() >= (tokenInfo.exp * 1000) - 60000,
+            rizz = () => refreshToken(config, ++Scoped.LastTokenRefreshRef[projectUrl], maxRetries, maxRetries, forceRefresh);
 
         if (hasExpire || forceRefresh) {
-            if (hasExpire) TokenRefreshListener.dispatch(projectUrl);
+            TokenRefreshListener.dispatch(projectUrl);
             return rizz();
         } else {
             TokenRefreshListener.dispatch(projectUrl, 'ready');
-            Scoped.TokenRefreshTimer[projectUrl] = setTimeout(() => {
+            Scoped.TokenRefreshTimer[projectUrl] = setLargeTimeout(() => {
                 TokenRefreshListener.dispatch(projectUrl);
                 rizz();
-            }, l.expOn - (Date.now() - 60000));
+            }, (tokenInfo.exp * 1000) - (Date.now() - 60000));
         }
     } else if (forceRefresh) {
         TokenRefreshListener.dispatch(projectUrl, 'ready');
@@ -72,51 +71,61 @@ export const initTokenRefresher = async (config, forceRefresh) => {
     }
 }
 
-const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7) => new Promise(async (resolve, reject) => {
-    const { projectUrl, accessKey, uglify } = builder;
+const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7, isForceRefresh) => new Promise(async (resolve, reject) => {
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
     const lostProcess = simplifyError('process_lost', 'The token refresh process has been lost and replace with another one');
 
     try {
-        const token = Scoped.AuthJWTToken[projectUrl],
-            r = await (await fetch(EngineApi._refreshAuthToken(projectUrl, uglify), buildFetchInterface({
-                body: { _: Scoped.AuthJWTToken[projectUrl] },
-                projectUrl,
-                accessKey,
-                uglify
-            }))).json();
+        const { token, refreshToken: r_token } = CacheStore.AuthStore[projectUrl];
 
-        if (processRef !== Scoped.LastTokenRefreshRef[projectUrl]) throw lostProcess;
+        const [reqBuilder, [privateKey]] = buildFetchInterface({
+            body: { token, r_token },
+            accessKey,
+            uglify,
+            serverE2E_PublicKey
+        });
+
+        const r = await (await fetch(EngineApi._refreshAuthToken(projectUrl, uglify), reqBuilder)).json();
+
+        if (processRef !== Scoped.LastTokenRefreshRef[projectUrl]) {
+            reject(lostProcess.simpleError);
+            return;
+        }
         if (r.simpleError) throw r;
 
+        const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
+
         if (CacheStore.AuthStore[projectUrl]) {
-            CacheStore.AuthStore[projectUrl] = { ...r.result };
-            Scoped.AuthJWTToken[projectUrl] = r.result.token;
-            invalidateToken(builder, token);
-            resolve(r.result.token);
-            triggerAuthToken(projectUrl);
+            CacheStore.AuthStore[projectUrl].token = f.result.token;
+            Scoped.AuthJWTToken[projectUrl] = f.result.token;
+
+            resolve(f.result.token);
+            triggerAuthToken(projectUrl, !Scoped.InitiatedForcedToken[projectUrl] && isForceRefresh);
+            if (isForceRefresh) Scoped.InitiatedForcedToken[projectUrl] = true;
             updateCacheStore();
-            initTokenRefresher({ projectUrl, accessKey, maxRetries: initialRetries });
-        } else throw lostProcess;
+            initTokenRefresher(builder);
+            invalidateToken(builder, token);
+        } else reject(lostProcess.simpleError);
     } catch (e) {
         if (e.simpleError) {
             console.error(`refreshToken error: ${e.simpleError?.message}`);
             doSignOut({ projectUrl, accessKey });
             reject(e.simpleError);
         } else if (remainRetries <= 0) {
+            reject(
+                processRef === Scoped.LastTokenRefreshRef[projectUrl] ?
+                    lostProcess.simpleError :
+                    simplifyError('retry_limit_reached', 'The retry limit has been reach and execution prematurely stopped').simpleError
+            );
             console.error(`refreshToken retry exceeded, waiting for 2min before starting another retry`);
-            setTimeout(() => {
-                if (processRef === Scoped.LastTokenRefreshRef[projectUrl]) {
-                    refreshToken(builder, processRef, initialRetries, initialRetries).then(resolve, reject);
-                } else reject(lostProcess.simpleError);
-            }, 120000);
         } else {
             const l = listenReachableServer(c => {
-                if (c) {
-                    l();
-                    refreshToken(builder, processRef, remainRetries - 1, initialRetries).then(resolve, reject);
-                } else if (processRef !== Scoped.LastTokenRefreshRef[projectUrl]) {
+                if (processRef !== Scoped.LastTokenRefreshRef[projectUrl]) {
                     reject(lostProcess.simpleError);
                     l();
+                } else if (c) {
+                    l();
+                    refreshToken(builder, processRef, remainRetries - 1, initialRetries).then(resolve, reject);
                 }
             }, projectUrl);
         }
@@ -125,18 +134,19 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
 
 export const invalidateToken = async (builder, token) => {
     try {
-        const { projectUrl, accessKey, uglify } = builder;
-
+        const { projectUrl, accessKey, uglify, serverE2E_PublicKey } = builder;
         await awaitReachableServer(projectUrl);
-        const r = await (await fetch(EngineApi._invalidateToken(projectUrl, uglify), buildFetchInterface({
-            body: { _: token },
+
+        const [reqBuilder] = buildFetchInterface({
+            body: { token },
             accessKey,
             uglify,
-            projectUrl
-        }))).json();
+            serverE2E_PublicKey
+        });
+
+        const r = await (await fetch(EngineApi._invalidateToken(projectUrl, uglify), reqBuilder)).json();
         if (r.simpleError) throw r;
     } catch (e) {
-        console.error('invalidateToken err: ', e);
-        throw e?.simpleError || { error: 'unexpected_error', message: `Error: ${e}` };
+        throw simplifyCaughtError(e).simpleError;
     }
 }
