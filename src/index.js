@@ -2,9 +2,9 @@ import 'react-native-get-random-values';
 import { IS_WHOLE_NUMBER, deserializeE2E, listenReachableServer, serializeE2E } from "./helpers/peripherals";
 import { releaseCacheStore } from "./helpers/utils";
 import { Scoped } from "./helpers/variables";
-import { MosquitoDbAuth } from "./products/auth";
-import { MosquitoDbCollection, batchWrite } from "./products/database";
-import { MosquitoDbStorage } from "./products/storage";
+import { MTAuth } from "./products/auth";
+import { MTCollection, batchWrite } from "./products/database";
+import { MTStorage } from "./products/storage";
 import { ServerReachableListener, TokenRefreshListener } from "./helpers/listeners";
 import { initTokenRefresher, listenTokenReady, triggerAuthToken } from "./products/auth/accessor";
 import { TIMESTAMP, DOCUMENT_EXTRACTION, FIND_GEO_JSON, GEO_JSON } from "./products/database/types";
@@ -24,21 +24,21 @@ const {
     _listenUserVerification
 } = EngineApi;
 
-class RNMosquitoDb {
+class RNMT {
     constructor(config) {
-        validateMosquitoDbConfig(config);
+        validateMTConfig(config, this);
         this.config = {
             ...config,
             uglify: config.enableE2E_Encryption,
             apiUrl: config.projectUrl,
-            projectUrl: config.projectUrl.split('/').filter((_, i, a) => i !== a.length - 1).join('/')
+            projectUrl: config.projectUrl.split('/').slice(0, -1).join('/')
         };
         const { projectUrl } = this.config;
 
         this.config.baseUrl = projectUrl.split('://')[1];
 
         if (!Scoped.ReleaseCacheData)
-            throw `releaseCache must be called before creating any mosquitodb instance`;
+            throw `releaseCache must be called before creating any ${this.constructor.name} instance`;
 
         if (!Scoped.InitializedProject[projectUrl]) {
             Scoped.InitializedProject[projectUrl] = true;
@@ -46,7 +46,9 @@ class RNMosquitoDb {
             triggerAuthToken(projectUrl);
             initTokenRefresher({ ...this.config }, true);
 
-            const socket = io(`ws://${projectUrl.split('://')[1]}`);
+            const socket = io(`ws://${projectUrl.split('://')[1]}`, {
+                auth: { _m_internal: true }
+            });
 
             socket.on('connect', () => {
                 ServerReachableListener.dispatch(projectUrl, true);
@@ -67,14 +69,14 @@ class RNMosquitoDb {
     }
 
     static releaseCache(prop) {
-        if (Scoped.ReleaseCacheData) throw `calling releaseCache multiple times is prohibited`;
+        if (Scoped.ReleaseCacheData) throw `calling ${this.name} multiple times is prohibited`;
         validateReleaseCacheProp({ ...prop });
         Scoped.ReleaseCacheData = { ...prop };
         releaseCacheStore({ ...prop });
     }
 
     getDatabase = (dbName, dbUrl) => ({
-        collection: (path) => new MosquitoDbCollection({
+        collection: (path) => new MTCollection({
             ...this.config,
             path,
             ...(dbName ? { dbName } : {}),
@@ -83,11 +85,11 @@ class RNMosquitoDb {
     });
     collection = (path) => {
         validateCollectionPath(path);
-        return new MosquitoDbCollection({ ...this.config, path });
+        return new MTCollection({ ...this.config, path });
     }
-    batchWrite = batchWrite;
-    auth = () => new MosquitoDbAuth({ ...this.config });
-    storage = () => new MosquitoDbStorage({ ...this.config });
+    batchWrite = (map, configx) => batchWrite({ ...this.config }, map, configx);
+    auth = () => new MTAuth({ ...this.config });
+    storage = () => new MTStorage({ ...this.config });
     fetchHttp = (endpoint, init, config) => mfetch(endpoint, init, { ...this.config, method: config });
     listenReachableServer = (callback) => listenReachableServer(callback, this.config.projectUrl);
 
@@ -187,7 +189,7 @@ class RNMosquitoDb {
         const init = async () => {
             if (hasCancelled) return;
             const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
-            const [reqBuilder, [privateKey]] = serializeE2E({ accessKey, a_extras: authHandshake }, mtoken, serverE2E_PublicKey);
+            const [reqBuilder, [privateKey]] = uglify ? serializeE2E({ accessKey, a_extras: authHandshake }, mtoken, serverE2E_PublicKey) : [null, []];
 
             socket = io(`ws://${projectUrl.split('://')[1]}`, {
                 auth: uglify ? {
@@ -313,7 +315,7 @@ const validator = {
             throw `Invalid value supplied to heapMemory, value must be number and greater than zero`;
     },
     projectUrl: (v) => {
-        if (typeof v !== 'string' || Regexs.LINK().test(v.trim()))
+        if (typeof v !== 'string' || !Regexs.LINK().test(v.trim()))
             throw `Invalid value supplied to projectUrl, value must be a string and greater than one`;
     },
     disableCache: (v) => {
@@ -338,8 +340,8 @@ const validator = {
     }
 };
 
-const validateMosquitoDbConfig = (config) => {
-    if (typeof config !== 'object') throw 'mosquitoDB config is not an object';
+const validateMTConfig = (config, that) => {
+    if (typeof config !== 'object') throw `${that.constructor.name} config is not an object`;
     const h = Object.keys(config);
 
     for (let i = 0; i < h.length; i++) {
@@ -351,8 +353,8 @@ const validateMosquitoDbConfig = (config) => {
 
     if (config.enableE2E_Encryption && !config.serverE2E_PublicKey)
         throw '"serverE2E_PublicKey" is missing, enabling end-to-end encryption requires a public encryption key from the server';
-    if (!config['projectUrl']) throw 'projectUrl is a required property in MosquitoDb() constructor';
-    if (!config['accessKey']) throw 'accessKey is a required property in MosquitoDb() constructor';
+    if (!config['projectUrl']) throw `projectUrl is a required property in ${that.constructor.name}() constructor`;
+    if (!config['accessKey']) throw `accessKey is a required property in ${that.constructor.name}() constructor`;
 }
 
 export {
@@ -362,4 +364,4 @@ export {
     GEO_JSON
 };
 
-export default RNMosquitoDb;
+export default RNMT;

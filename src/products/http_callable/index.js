@@ -47,7 +47,7 @@ export const mfetch = async (input = '', init = {}, config) => {
             jij: { disableAuth: !!disableAuth, url: input, projectUrl, retrieval }
         });
 
-    if ('mtoken' in (init?.headers))
+    if ('mtoken' in (init?.headers || {}))
         throw '"mtoken" in header is a reserved prop';
 
     if ('uglified' in (init?.headers || {}))

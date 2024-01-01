@@ -13,12 +13,12 @@ export const listenToken = (callback, projectUrl) =>
         callback?.(t || null);
     }, true);
 
-export const injectFreshToken = async (config, obj) => {
+export const injectFreshToken = async (config, { token, refreshToken }) => {
     const { projectUrl } = config;
 
     await awaitStore();
-    CacheStore.AuthStore[projectUrl] = { ...obj };
-    Scoped.AuthJWTToken[projectUrl] = obj.token;
+    CacheStore.AuthStore[projectUrl] = { token, refreshToken };
+    Scoped.AuthJWTToken[projectUrl] = token;
     updateCacheStore();
 
     triggerAuthToken(projectUrl);
@@ -63,7 +63,7 @@ export const initTokenRefresher = async (config, forceRefresh) => {
             Scoped.TokenRefreshTimer[projectUrl] = setLargeTimeout(() => {
                 TokenRefreshListener.dispatch(projectUrl);
                 rizz();
-            }, (tokenInfo.exp * 1000) - (Date.now() - 60000));
+            }, ((tokenInfo.exp * 1000) - 60000) - Date.now());
         }
     } else if (forceRefresh) {
         TokenRefreshListener.dispatch(projectUrl, 'ready');
@@ -109,7 +109,7 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
     } catch (e) {
         if (e.simpleError) {
             console.error(`refreshToken error: ${e.simpleError?.message}`);
-            doSignOut({ projectUrl, accessKey });
+            doSignOut({ ...builder });
             reject(e.simpleError);
         } else if (remainRetries <= 0) {
             reject(

@@ -1,7 +1,10 @@
 import { Buffer } from "buffer";
 import { ServerReachableListener } from "./listeners";
-import { AES, enc } from 'crypto-js';
-import { box, randomBytes } from 'tweetnacl';
+import AES_Pkg from 'crypto-js';
+import naclPkg from 'tweetnacl';
+
+const { AES, enc } = AES_Pkg;
+const { box, randomBytes } = naclPkg;
 
 export const simplifyError = (error, message) => ({
     simpleError: { error, message }

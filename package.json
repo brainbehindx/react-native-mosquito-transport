@@ -1,17 +1,17 @@
 {
-  "name": "react-native-mosquitodb",
+  "name": "react-native-mosquito-transport",
   "version": "0.0.14",
-  "description": "React native javascript sdk for mosquitodb",
+  "description": "React native javascript sdk for mosquito-transport (https://github.com/deflexable/mosquito-transport)",
   "main": "src/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deflexable/react-native-mosquitodb.git"
+    "url": "git+https://github.com/deflexable/react-native-mosquito-transport.git"
   },
   "keywords": [
-    "mosquitodb",
+    "mosquito-transport",
     "javascript",
     "selfhosted",
     "serverless",
@@ -23,9 +23,9 @@
   "author": "Anthony Onabanjo <deflexable@gmail.com> (https://github.com/deflexable)",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/deflexable/react-native-mosquitodb/issues"
+    "url": "https://github.com/deflexable/react-native-mosquito-transport/issues"
   },
-  "homepage": "https://github.com/deflexable/react-native-mosquitodb#readme",
+  "homepage": "https://github.com/deflexable/react-native-mosquito-transport#readme",
   "dependencies": {
     "@types/crypto-js": "^4.2.1",
     "@types/lodash": "^4.14.194",

@@ -7,12 +7,12 @@ import { awaitReachableServer, buildFetchInterface, simplifyError } from "../../
 import { awaitRefreshToken } from "../auth/accessor";
 
 const LINKING_ERROR =
-    `The package 'react-native-mosquitodb' doesn't seem to be linked. Make sure: \n\n` +
+    `The package 'react-native-mosquito-transport' doesn't seem to be linked. Make sure: \n\n` +
     Platform.select({ ios: "- You have run 'pod install'\n", default: '' }) +
     '- You rebuilt the app after installing the package\n' +
     '- You are not using Expo Go\n';
 
-const MosquitodbModule = NativeModules.Mosquitodb || (
+const RNMTModule = NativeModules.Mosquitodb || (
     new Proxy({}, {
         get() {
             throw new Error(LINKING_ERROR);
@@ -20,9 +20,9 @@ const MosquitodbModule = NativeModules.Mosquitodb || (
     })
 ),
     emitter = Platform.OS === 'android' ?
-        DeviceEventEmitter : new NativeEventEmitter(MosquitodbModule);
+        DeviceEventEmitter : new NativeEventEmitter(RNMTModule);
 
-export class MosquitoDbStorage {
+export class MTStorage {
     constructor(config) {
         this.builder = { ...config };
     }
@@ -54,7 +54,7 @@ export class MosquitoDbStorage {
             if (hasCancelled) return;
 
             const processID = `${++Scoped.StorageProcessID}`,
-                progressListener = emitter.addListener('mosquitodb-download-progress', ({ processID: ref, receivedBtyes, expectedBytes }) => {
+                progressListener = emitter.addListener('mt-download-progress', ({ processID: ref, receivedBtyes, expectedBytes }) => {
                     if (processID !== ref || hasFinished || hasCancelled) return;
                     onProgress?.({
                         receivedBtyes,
@@ -62,17 +62,17 @@ export class MosquitoDbStorage {
                         isPaused: !!isPaused,
                         pause: () => {
                             if (hasFinished || isPaused || hasCancelled) return;
-                            MosquitodbModule.pauseDownload(processID);
+                            RNMTModule.pauseDownload(processID);
                             isPaused = true;
                         },
                         resume: () => {
                             if (hasFinished || !isPaused || hasCancelled) return;
-                            MosquitodbModule.pauseDownload(processID);
+                            RNMTModule.pauseDownload(processID);
                             isPaused = false;
                         }
                     });
                 }),
-                resultListener = emitter.addListener('mosquitodb-download-status', ({ processID: ref, error, errorDes, result }) => {
+                resultListener = emitter.addListener('mt-download-status', ({ processID: ref, error, errorDes, result }) => {
                     if (processID !== ref) return;
                     if (result)
                         try {
@@ -88,7 +88,7 @@ export class MosquitoDbStorage {
                     hasFinished = true;
                 });
 
-            MosquitodbModule.downloadFile({
+            RNMTModule.downloadFile({
                 url: link,
                 authToken: Scoped.AuthJWTToken[projectUrl],
                 ...(destination ? {
@@ -105,7 +105,7 @@ export class MosquitoDbStorage {
 
         return () => {
             if (hasFinished || hasCancelled) return;
-            MosquitodbModule.cancelDownload(processID);
+            RNMTModule.cancelDownload(processID);
             hasCancelled = true;
             setTimeout(() => {
                 onComplete?.({ error: 'download_aborted', message: 'The download process was aborted' });
@@ -140,11 +140,11 @@ export class MosquitoDbStorage {
             await awaitRefreshToken(projectUrl);
 
             if (hasCancelled) return;
-            const progressListener = emitter.addListener('mosquitodb-uploading-progress', ({ processID: ref, sentBtyes, totalBytes }) => {
+            const progressListener = emitter.addListener('mt-uploading-progress', ({ processID: ref, sentBtyes, totalBytes }) => {
                 if (processID !== ref || hasFinished || hasCancelled) return;
                 onProgress?.({ sentBtyes, totalBytes });
             }),
-                resultListener = emitter.addListener('mosquitodb-uploading-status', ({ processID: ref, error, errorDes, result }) => {
+                resultListener = emitter.addListener('mt-uploading-status', ({ processID: ref, error, errorDes, result }) => {
                     if (processID !== ref || hasFinished) return;
                     if (result)
                         try {
@@ -160,7 +160,7 @@ export class MosquitoDbStorage {
                     hasFinished = true;
                 });
 
-            MosquitodbModule.uploadFile({
+            RNMTModule.uploadFile({
                 url: EngineApi._uploadFile(projectUrl),
                 file: isAsset ? file : file.substring('file://'.length),
                 authToken: Scoped.AuthJWTToken[projectUrl],
@@ -178,7 +178,7 @@ export class MosquitoDbStorage {
             setTimeout(() => {
                 onComplete?.({ error: 'upload_aborted', message: 'The upload process was aborted' });
             }, 1);
-            MosquitodbModule.cancelUpload(processID);
+            RNMTModule.cancelUpload(processID);
         }
     }
 

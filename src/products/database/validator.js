@@ -230,7 +230,7 @@ const evaluateFilter = (data = {}, filter = {}) => {
                 logics.push(Array.isArray(pathValue) && pathValue.length === value);
             } else if ($ === $TYPE) {
                 if (!dataTypesValue.includes(value))
-                    throw `invalid value supplied to ${$}, mosquitodb only recognise "${dataTypesValue}" data types`;
+                    throw `invalid value supplied to ${$}, mosquioto-transport only recognise "${dataTypesValue}" data types`;
 
                 const cock = (v) => {
                     if (typeof v === 'number') {

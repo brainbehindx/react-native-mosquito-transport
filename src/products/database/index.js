@@ -10,7 +10,7 @@ import { awaitRefreshToken, listenToken } from "../auth/accessor";
 import { DEFAULT_DB_NAME, DEFAULT_DB_URL, DELIVERY, RETRIEVAL } from "../../helpers/values";
 import setLodash from 'lodash/set';
 
-export class MosquitoDbCollection {
+export class MTCollection {
     constructor(config) {
         this.builder = { ...config };
     }
@@ -96,7 +96,7 @@ export class MosquitoDbCollection {
     deleteMany = (find, config) => commitData({ ...this.builder, find }, null, 'deleteMany', config);
 }
 
-export const batchWrite = (map, config) => commitData({ ...this.builder }, map, 'batchWrite', config);
+export const batchWrite = (builder, map, config) => commitData({ ...builder }, map, 'batchWrite', config);
 
 const {
     _listenCollection,
@@ -161,7 +161,7 @@ const listenDocument = (callback, onError, builder, config) => {
                 dbUrl
             };
 
-        const [encPlate, [privateKey]] = serializeE2E({ accessKey, _body: authObj }, mtoken, serverE2E_PublicKey);
+        const [encPlate, [privateKey]] = uglify ? serializeE2E({ accessKey, _body: authObj }, mtoken, serverE2E_PublicKey) : ['', []];
 
         socket = io(`ws://${baseUrl}`, {
             auth: uglify ? { e2e: encPlate, _m_internal: true } : {
@@ -499,7 +499,7 @@ const findObject = async (builder, config) => {
 
 const commitData = async (builder, value, type, config) => {
     const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, find, disableCache, uglify } = builder,
-        { disableAuth, delivery = DELIVERY.DEFAULT } = config || {},
+        { disableAuth, delivery = DELIVERY.DEFAULT, stepping } = config || {},
         writeId = `${Date.now() + ++Scoped.PendingIte}`,
         isBatchWrite = type === 'batchWrite',
         shouldCache = (delivery === DELIVERY.DEFAULT ? !disableCache : true) &&
@@ -544,7 +544,7 @@ const commitData = async (builder, value, type, config) => {
                 body: {
                     commands: {
                         value,
-                        ...isBatchWrite ? {} : {
+                        ...isBatchWrite ? { stepping } : {
                             path,
                             scope: type,
                             find

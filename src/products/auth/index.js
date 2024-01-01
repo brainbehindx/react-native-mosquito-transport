@@ -15,7 +15,7 @@ const {
     _googleSignin
 } = EngineApi;
 
-export class MosquitoDbAuth {
+export class MTAuth {
     constructor(config) {
         this.builder = { ...config };
     }
@@ -57,7 +57,7 @@ export class MosquitoDbAuth {
             }
             if (processID !== lastInitRef) return;
             const mtoken = Scoped.AuthJWTToken[projectUrl],
-                [reqBuilder, [privateKey]] = serializeE2E({ mtoken }, undefined, serverE2E_PublicKey);
+                [reqBuilder, [privateKey]] = uglify ? serializeE2E({ mtoken }, undefined, serverE2E_PublicKey) : [null, []];
 
             socket = io(`ws://${baseUrl}`, {
                 auth: uglify ? {
@@ -116,7 +116,7 @@ export class MosquitoDbAuth {
         let lastTrig;
 
         return listenToken((t, initToken) => {
-            const { refreshToken } = CacheStore.AuthStore[projectUrl] || {};
+            const { refreshToken } = CacheStore.AuthStore[this.builder.projectUrl] || {};
 
             if (
                 (!!t || null) !== lastTrig ||
@@ -164,7 +164,8 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
 
         resolve({
             user: parseToken(r.result.token),
-            token
+            token: r.result.token,
+            refreshToken: r.result.refreshToken
         });
         await injectFreshToken(builder, r.result);
     } catch (e) {
@@ -194,7 +195,8 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
 
         resolve({
             user: parseToken(r.result.token),
-            token: r.result.token
+            token: r.result.token,
+            refreshToken: r.result.refreshToken
         });
         await injectFreshToken(builder, r.result);
     } catch (e) {
@@ -204,11 +206,11 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
 
 export const doSignOut = async (builder) => {
     await awaitStore();
-    TokenRefreshListener.dispatch(projectUrl);
 
     const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder,
         { token, refreshToken: r_token } = CacheStore.AuthStore[projectUrl];
 
+    TokenRefreshListener.dispatch(projectUrl);
     if (CacheStore.AuthStore[projectUrl]) delete CacheStore.AuthStore[projectUrl];
     if (token) delete Scoped.AuthJWTToken[projectUrl];
     Object.keys(CacheConstant).forEach(e => {
@@ -258,7 +260,8 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
         resolve({
             user: parseToken(f.result.token),
             token: f.result.token,
-            isNewUser: f.isNewUser
+            refreshToken: f.result.refreshToken,
+            isNewUser: f.result.isNewUser
         });
         await injectFreshToken(builder, f.result);
     } catch (e) {
