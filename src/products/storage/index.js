@@ -1,7 +1,6 @@
 import EngineApi from "../../helpers/EngineApi";
-import { prefixStoragePath } from "../../helpers/peripherals";
+import { encodeBinary, prefixStoragePath } from "../../helpers/peripherals";
 import { Scoped } from "../../helpers/variables";
-import { encode as btoa } from 'base-64';
 import { DeviceEventEmitter, NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { awaitReachableServer, buildFetchInterface, simplifyError } from "../../helpers/utils";
 import { awaitRefreshToken } from "../auth/accessor";
@@ -97,7 +96,7 @@ export class MTStorage {
                 } : {}),
                 processID,
                 urlName: link.split('/').pop(),
-                authorization: `Bearer ${btoa(accessKey)}`
+                authorization: `Bearer ${encodeBinary(accessKey)}`
             });
         }
 
@@ -166,7 +165,7 @@ export class MTStorage {
                 authToken: Scoped.AuthJWTToken[projectUrl],
                 destination,
                 processID,
-                authorization: `Bearer ${btoa(accessKey)}`
+                authorization: `Bearer ${encodeBinary(accessKey)}`
             });
         }
 

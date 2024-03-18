@@ -126,7 +126,7 @@ class RNMT {
                 res = parse(deserializeE2E(args, serverE2E_PublicKey, clientPrivateKey));
             } else res = args;
 
-            callback?.(...res || [], ...typeof restArgs === 'function' ? [function () {
+            callback?.(...res || [], ...typeof restArgs[0] === 'function' ? [function () {
                 const args = [...arguments];
                 let res;
 
@@ -134,7 +134,7 @@ class RNMT {
                     res = serializeE2E(stringify(args), undefined, serverE2E_PublicKey)[0];
                 } else res = args;
 
-                restArgs(res);
+                restArgs[0](res);
             }] : []);
         }
 
@@ -162,25 +162,28 @@ class RNMT {
                 const h = isNaN(timeout) ? socket : socket.timeout(timeout - (Date.now() - stime));
 
                 const lastEmit = emittion.slice(-1)[0],
-                    mit = typeof lastEmit === 'function' ? emittion.slice(0, emittion.length - 1) : emittion;
+                    mit = typeof lastEmit === 'function' ? emittion.slice(0, -1) : emittion;
 
                 const [reqBuilder, [privateKey]] = uglify ? serializeE2E(stringify(mit), undefined, serverE2E_PublicKey) : [undefined, []];
+
+                if (typeof lastEmit === 'function' && promise)
+                    throw 'emitWithAck cannot have function in it parameter';
 
                 const p = await h[promise ? 'emitWithAck' : 'emit'](route,
                     ...uglify ? [reqBuilder] : [mit],
                     ...typeof lastEmit === 'function' ? [function () {
-                        const args = [...arguments];
+                        const args = [...arguments][0];
                         let res;
 
                         if (uglify) {
-                            res = parse(deserializeE2E(args[0], serverE2E_PublicKey, privateKey));
+                            res = parse(deserializeE2E(args, serverE2E_PublicKey, privateKey));
                         } else res = args;
 
                         lastEmit(...res || []);
                     }] : []
                 );
 
-                resolve(promise ? parse(deserializeE2E(p, serverE2E_PublicKey, privateKey))[0] : undefined);
+                resolve((promise && p) ? uglify ? parse(deserializeE2E(p, serverE2E_PublicKey, privateKey))[0] : p[0] : undefined);
             } catch (e) {
                 reject(e);
             }
@@ -197,7 +200,6 @@ class RNMT {
                     e2e: reqBuilder
                 } : {
                     ...mtoken ? { mtoken } : {},
-                    ugly: uglify,
                     a_extras: authHandshake,
                     accessKey
                 }

@@ -1,11 +1,11 @@
-import { encode as btoa } from 'base-64';
 import { Platform } from 'react-native';
+import { encodeBinary } from './peripherals';
 
-export const CACHE_STORAGE_PATH = btoa('MOSQUITO_TRANSPORT_FREEZER'),
-    DEFAULT_CACHE_PASSWORD = btoa('MOSQUITO_TRANSPORT_CACHE_PASSWORD'),
+export const CACHE_STORAGE_PATH = encodeBinary('MOSQUITO_TRANSPORT_FREEZER'),
+    DEFAULT_CACHE_PASSWORD = encodeBinary('MOSQUITO_TRANSPORT_CACHE_PASSWORD'),
     LOCAL_STORAGE_PATH = () => {
         const fs = require('react-native-fs');
-        return `${Platform.OS === 'android' ? fs.ExternalCachesDirectoryPath : fs.CachesDirectoryPath}/${btoa('MOSQUITO_TRANSPORT_STORAGE')}`;
+        return `${Platform.OS === 'android' ? fs.ExternalCachesDirectoryPath : fs.CachesDirectoryPath}/${encodeBinary('MOSQUITO_TRANSPORT_STORAGE')}`;
     },
     DEFAULT_DB_NAME = 'DEFAULT_DB',
     DEFAULT_DB_URL = 'mongodb://127.0.0.1:27017',

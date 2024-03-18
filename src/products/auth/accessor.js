@@ -2,15 +2,14 @@ import setLargeTimeout from "set-large-timeout";
 import { doSignOut } from ".";
 import EngineApi from "../../helpers/EngineApi";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
-import { deserializeE2E, listenReachableServer, simplifyCaughtError } from "../../helpers/peripherals";
+import { decodeBinary, deserializeE2E, listenReachableServer, simplifyCaughtError } from "../../helpers/peripherals";
 import { awaitReachableServer, awaitStore, buildFetchInterface, simplifyError, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
-import { decode as atob } from 'base-64';
 
 export const listenToken = (callback, projectUrl) =>
-    AuthTokenListener.listenTo(projectUrl, t => {
+    AuthTokenListener.listenTo(projectUrl, (t, n) => {
         if (t === undefined) return;
-        callback?.(t || null);
+        callback?.(t || null, n);
     }, true);
 
 export const injectFreshToken = async (config, { token, refreshToken }) => {
@@ -25,7 +24,7 @@ export const injectFreshToken = async (config, { token, refreshToken }) => {
     initTokenRefresher(config);
 }
 
-export const parseToken = (token) => JSON.parse(atob(token.split('.')[1]));
+export const parseToken = (token) => JSON.parse(decodeBinary(token.split('.')[1]));
 
 export const triggerAuthToken = async (projectUrl, isInit) => {
     await awaitStore();

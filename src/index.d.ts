@@ -56,6 +56,10 @@ interface BatchWriteValue {
     path: string;
 }
 
+interface BatchWriteConfig extends WriteConfig {
+    stepping?: boolean;
+}
+
 export default class RNMT {
     constructor(config: RNMTConfig);
     static releaseCache(option?: ReleaseCacheOption): void;
@@ -66,7 +70,7 @@ export default class RNMT {
     fetchHttp(endpoint: string, init?: RequestInit, config?: FetchHttpConfig): Promise<Response>;
     listenReachableServer(callback: (reachable: boolean) => void): () => void;
     getSocket(options: { disableAuth?: boolean; authHandshake?: Object }): RNMTSocket;
-    batchWrite(map: BatchWriteValue[], config?: WriteConfig): Promise<DocumentWriteResult[] | undefined>;
+    batchWrite(map: BatchWriteValue[], config?: BatchWriteConfig): Promise<DocumentWriteResult[] | undefined>;
 }
 
 interface RNMTCollection {

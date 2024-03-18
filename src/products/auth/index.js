@@ -4,8 +4,7 @@ import { TokenRefreshListener } from "../../helpers/listeners";
 import { awaitReachableServer, awaitStore, buildFetchInterface, simplifyError, updateCacheStore } from "../../helpers/utils";
 import { CacheConstant, CacheStore, Scoped } from "../../helpers/variables";
 import { awaitRefreshToken, initTokenRefresher, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
-import { encode as btoa } from 'base-64';
-import { deserializeE2E, serializeE2E, simplifyCaughtError } from "../../helpers/peripherals";
+import { deserializeE2E, encodeBinary, serializeE2E, simplifyCaughtError } from "../../helpers/peripherals";
 
 const {
     _listenUserVerification,
@@ -151,7 +150,7 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
     try {
         await awaitStore();
         const [reqBuilder, [privateKey]] = buildFetchInterface({
-            body: { _: `${btoa(email)}.${btoa(password)}` },
+            body: { _: `${encodeBinary(email)}.${encodeBinary(password)}` },
             accessKey,
             serverE2E_PublicKey,
             uglify
@@ -180,7 +179,7 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
         await awaitStore();
         const [reqBuilder, [privateKey]] = buildFetchInterface({
             body: {
-                _: `${btoa(email)}.${btoa(password)}.${(btoa(name || '').trim())}`,
+                _: `${encodeBinary(email)}.${encodeBinary(password)}.${(encodeBinary(name || '').trim())}`,
                 metadata,
             },
             accessKey,

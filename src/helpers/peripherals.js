@@ -1,9 +1,10 @@
 import { Buffer } from "buffer";
 import { ServerReachableListener } from "./listeners";
-import AES_Pkg from 'crypto-js';
+import aes_pkg from 'crypto-js/aes.js';
+import Utf8Encoder from 'crypto-js/enc-utf8.js';
 import naclPkg from 'tweetnacl';
 
-const { AES, enc } = AES_Pkg;
+const { encrypt, decrypt } = aes_pkg;
 const { box, randomBytes } = naclPkg;
 
 export const simplifyError = (error, message) => ({
@@ -148,11 +149,11 @@ export function sortArrayByObjectKey(arr = [], key) {
 }
 
 export const encryptString = (txt, password, iv) => {
-    return AES.encrypt(txt, `${password || ''}${iv || ''}`).toString();
+    return encrypt(txt, `${password || ''}${iv || ''}`).toString();
 }
 
 export const decryptString = (txt, password, iv) => {
-    return AES.decrypt(txt, `${password || ''}${iv || ''}`).toString(enc.Utf8);
+    return decrypt(txt, `${password || ''}${iv || ''}`).toString(Utf8Encoder);
 }
 
 export const serializeE2E = (data, auth_token, serverPublicKey) => {
@@ -189,3 +190,6 @@ export const deserializeE2E = (data, serverPublicKey, clientPrivateKey) => {
     if (!baseArray) throw 'Decrypting e2e message failed';
     return JSON.parse(Buffer.from(baseArray).toString('utf8'))[0];
 }
+
+export const encodeBinary = (s) => Buffer.from(s, 'utf8').toString('base64');
+export const decodeBinary = (s) => Buffer.from(s, 'base64').toString('utf8');

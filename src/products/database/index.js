@@ -187,7 +187,7 @@ const listenDocument = (callback, onError, builder, config) => {
         });
 
         socket.on('connect', () => {
-            if (wasDisconnected) socket.emit(findOne ? '_listenDocument' : '_listenCollection');
+            if (wasDisconnected) socket.emit((findOne ? _listenDocument : _listenCollection)(uglify));
         });
 
         socket.on('disconnect', () => {
