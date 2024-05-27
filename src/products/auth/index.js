@@ -42,7 +42,7 @@ export class MTAuth {
     }
 
     listenVerifiedStatus(callback, onError) {
-        const { projectUrl, serverE2E_PublicKey, uglify, baseUrl } = this.builder;
+        const { projectUrl, serverE2E_PublicKey, uglify, baseUrl, wsPrefix } = this.builder;
 
         let socket, wasDisconnected, lastToken = Scoped.AuthJWTToken[projectUrl] || null, lastInitRef = 0;
 
@@ -58,7 +58,7 @@ export class MTAuth {
             const mtoken = Scoped.AuthJWTToken[projectUrl],
                 [reqBuilder, [privateKey]] = uglify ? serializeE2E({ mtoken }, undefined, serverE2E_PublicKey) : [null, []];
 
-            socket = io(`ws://${baseUrl}`, {
+            socket = io(`${wsPrefix}://${baseUrl}`, {
                 auth: uglify ? {
                     e2e: reqBuilder,
                     _m_internal: true

@@ -35,7 +35,9 @@ class RNMT {
         };
         const { projectUrl } = this.config;
 
+        this.config.secureUrl = projectUrl.startsWith('https');
         this.config.baseUrl = projectUrl.split('://')[1];
+        this.config.wsPrefix = this.config.secureUrl ? 'wss' : 'ws';
 
         if (!Scoped.ReleaseCacheData)
             throw `releaseCache must be called before creating any ${this.constructor.name} instance`;
@@ -46,8 +48,12 @@ class RNMT {
             triggerAuthToken(projectUrl);
             initTokenRefresher({ ...this.config }, true);
 
-            const socket = io(`ws://${projectUrl.split('://')[1]}`, {
-                auth: { _m_internal: true }
+            const socket = io(`${this.config.wsPrefix}://${projectUrl.split('://')[1]}`, {
+                auth: { _m_internal: true, _from_base: true }
+            });
+
+            socket.on('_signal_signout', () => {
+                this.auth().signOut();
             });
 
             socket.on('connect', () => {
@@ -69,7 +75,7 @@ class RNMT {
     }
 
     static releaseCache(prop) {
-        if (Scoped.ReleaseCacheData) throw `calling ${this.name} multiple times is prohibited`;
+        if (Scoped.ReleaseCacheData) throw `calling ${this.name}() multiple times is prohibited`;
         validateReleaseCacheProp({ ...prop });
         Scoped.ReleaseCacheData = { ...prop };
         releaseCacheStore({ ...prop });
@@ -95,7 +101,7 @@ class RNMT {
 
     getSocket = (configOpts) => {
         const { disableAuth, authHandshake } = configOpts || {},
-            { projectUrl, uglify, accessKey, serverE2E_PublicKey } = this.config;
+            { projectUrl, uglify, accessKey, serverE2E_PublicKey, wsPrefix } = this.config;
 
         const restrictedRoute = [
             _listenCollection,
@@ -194,7 +200,7 @@ class RNMT {
             const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
             const [reqBuilder, [privateKey]] = uglify ? serializeE2E({ accessKey, a_extras: authHandshake }, mtoken, serverE2E_PublicKey) : [null, []];
 
-            socket = io(`ws://${projectUrl.split('://')[1]}`, {
+            socket = io(`${wsPrefix}://${projectUrl.split('://')[1]}`, {
                 auth: uglify ? {
                     ugly: true,
                     e2e: reqBuilder
