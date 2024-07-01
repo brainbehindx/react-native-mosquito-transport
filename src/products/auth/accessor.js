@@ -103,7 +103,6 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
             if (isForceRefresh) Scoped.InitiatedForcedToken[projectUrl] = true;
             updateCacheStore();
             initTokenRefresher(builder);
-            invalidateToken(builder, token);
         } else reject(lostProcess.simpleError);
     } catch (e) {
         if (e.simpleError) {
@@ -130,22 +129,3 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
         }
     }
 });
-
-export const invalidateToken = async (builder, token) => {
-    try {
-        const { projectUrl, accessKey, uglify, serverE2E_PublicKey } = builder;
-        await awaitReachableServer(projectUrl);
-
-        const [reqBuilder] = buildFetchInterface({
-            body: { token },
-            accessKey,
-            uglify,
-            serverE2E_PublicKey
-        });
-
-        const r = await (await fetch(EngineApi._invalidateToken(projectUrl, uglify), reqBuilder)).json();
-        if (r.simpleError) throw r;
-    } catch (e) {
-        throw simplifyCaughtError(e).simpleError;
-    }
-}

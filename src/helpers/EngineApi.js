@@ -14,7 +14,6 @@ const apis = {
     _twitterSignin: (baseApi, ugly) => `${baseApi}/${ugly ? encodeBinary(apis._twitterSignin(baseApi)) : '_twitterSignin'}`,
     _githubSignin: (baseApi, ugly) => `${baseApi}/${ugly ? encodeBinary(apis._githubSignin(baseApi)) : '_githubSignin'}`,
     _signOut: (baseApi, ugly) => `${baseApi}/${ugly ? encodeBinary(apis._signOut(baseApi)) : '_signOut'}`,
-    _invalidateToken: (baseApi, ugly) => `${baseApi}/${ugly ? encodeBinary(apis._invalidateToken(baseApi)) : '_invalidateToken'}`,
     _refreshAuthToken: (baseApi, ugly) => `${baseApi}/${ugly ? encodeBinary(apis._refreshAuthToken(baseApi)) : '_refreshAuthToken'}`,
     _downloadFile: (baseApi, ugly) => `${baseApi}/${ugly ? encodeBinary(apis._downloadFile(baseApi)) : '_downloadFile'}`,
     _uploadFile: (baseApi, ugly) => `${baseApi}/${ugly ? encodeBinary(apis._uploadFile(baseApi)) : '_uploadFile'}`,

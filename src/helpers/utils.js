@@ -5,7 +5,7 @@ import { CacheStore, Scoped } from "./variables";
 import { decryptString, encryptString, niceTry, serializeE2E } from "./peripherals";
 
 export const updateCacheStore = () => {
-    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE } = Scoped.ReleaseCacheData;
+    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE, io } = Scoped.ReleaseCacheData;
 
     clearTimeout(Scoped.cacheStorageReducer);
     Scoped.cacheStorageReducer = setTimeout(() => {
@@ -15,7 +15,9 @@ export const updateCacheStore = () => {
             cachePassword
         );
 
-        if (cacheProtocol === CACHE_PROTOCOL.ASYNC_STORAGE) {
+        if (io) {
+            io.ouput(txt);
+        } else if (cacheProtocol === CACHE_PROTOCOL.ASYNC_STORAGE) {
             AsyncStorage.setItem(CACHE_STORAGE_PATH, txt);
         } else {
             const fs = require('react-native-fs');
@@ -25,11 +27,13 @@ export const updateCacheStore = () => {
 }
 
 export const releaseCacheStore = async (builder) => {
-    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE } = builder;
+    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE, io } = builder;
 
     let txt;
 
-    if (cacheProtocol === CACHE_PROTOCOL.ASYNC_STORAGE) {
+    if (io) {
+        txt = await io.input();
+    } else if (cacheProtocol === CACHE_PROTOCOL.ASYNC_STORAGE) {
         txt = await niceTry(() => AsyncStorage.getItem(CACHE_STORAGE_PATH));
     } else {
         const fs = require('react-native-fs');
@@ -37,7 +41,7 @@ export const releaseCacheStore = async (builder) => {
     }
 
     const j = JSON.parse(decryptString(txt || '', cachePassword, cachePassword) || '{}');
-    
+
     Object.entries(j).forEach(([k, v]) => {
         CacheStore[k] = v;
     });

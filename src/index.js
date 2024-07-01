@@ -299,14 +299,26 @@ class RNMT {
 const validateReleaseCacheProp = (prop) => {
     const cacheList = [...Object.values(CACHE_PROTOCOL)];
 
-    Object.entries(prop).forEach(([k, v]) => {
-        if (k === 'cachePassword') {
-            if (typeof v !== 'string' || v.trim().length <= 0)
-                throw `Invalid value supplied to cachePassword, value must be a string and greater than 0 characters`;
-        } else if (k === 'cacheProtocol') {
-            if (!cacheList.includes(`${v}`)) throw `unknown value supplied to ${k}, expected any of ${cacheList}`;
-        } else throw `Unexpected property named ${k}`;
-    });
+    if (prop?.io) {
+        Object.entries(prop).forEach(([k, v]) => {
+            if (k === 'input' || k === 'output') {
+                if (typeof v !== 'function')
+                    throw `Invalid value supplied to ${k}, expected a function but got "${v}"`;
+            } else if (k === 'cachePassword') {
+                if (typeof v !== 'string' || v.trim().length <= 0)
+                    throw `Invalid value supplied to cachePassword, value must be a string and greater than 0 characters`;
+            } else throw `Unexpected property named ${k}`;
+        });
+    } else {
+        Object.entries(prop).forEach(([k, v]) => {
+            if (k === 'cachePassword') {
+                if (typeof v !== 'string' || v.trim().length <= 0)
+                    throw `Invalid value supplied to cachePassword, value must be a string and greater than 0 characters`;
+            } else if (k === 'cacheProtocol') {
+                if (!cacheList.includes(`${v}`)) throw `unknown value supplied to ${k}, expected any of ${cacheList}`;
+            } else throw `Unexpected property named ${k}`;
+        });
+    }
 }
 
 const validator = {

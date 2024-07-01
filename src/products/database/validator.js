@@ -202,12 +202,19 @@ const evaluateFilter = (data = {}, filter = {}) => {
                 } else logics.push(false);
             } else if ($ === $TEXT) {
                 if (commandSplit.slice(-1)[0].$ === '$search') {
-                    const { $caseSensitive, $localFields = [], $search } = dataObj.$text;
+                    const { $caseSensitive, $search, $field } = filter.$text;
 
                     if (typeof value !== 'string' || typeof $search !== 'string')
                         throw `$search must have a string value`;
+                    if (!$field) throw '"$field" is required inside "$text" operator when "disableCache=false"';
+                    const fieldArr = Array.isArray($field) ? $field : [$field];
 
-                    const searchTxt = $localFields.map(v => getLodash(dataObj, v || '')).map(v =>
+                    fieldArr.forEach(v => {
+                        if (typeof v !== 'string' || !v.trim())
+                            throw `invalid item inside "$field", expected a non-empty string but got "${v}"`;
+                    });
+
+                    const searchTxt = fieldArr.map(v => getLodash(dataObj, v || '')).map(v =>
                         `${typeof v === 'string' ? v :
                             Array.isArray(v) ? v.map(v => typeof v === 'string' ? v : '').join(' ').trim() : ''}`.trim()
                     ).join(' ').trim();

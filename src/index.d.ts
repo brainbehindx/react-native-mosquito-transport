@@ -25,9 +25,26 @@ interface mtimestamp { $timestamp: 'now' }
 export const TIMESTAMP: mtimestamp;
 export function DOCUMENT_EXTRACTION(path: string): { $dynamicValue: number };
 
+interface ReleaseCacheOption_IO {
+    /**
+     * This password will be used to encrypt data stored locally
+     */
+    cachePassword?: string;
+    io: {
+        /**
+         * feeds mosquito-transport data
+         */
+        input: () => string;
+        /**
+         * emits mosquito-transport internal data
+         */
+        output: (data: string) => void;
+    }
+}
+
 interface ReleaseCacheOption {
     /**
-     * This password will be used to securely store your data locally
+     * This password will be used to encrypt data stored locally
      */
     cachePassword?: string;
     /**
@@ -62,7 +79,7 @@ interface BatchWriteConfig extends WriteConfig {
 
 export default class RNMT {
     constructor(config: RNMTConfig);
-    static releaseCache(option?: ReleaseCacheOption): void;
+    static releaseCache(option?: ReleaseCacheOption | ReleaseCacheOption_IO): void;
     getDatabase(dbName?: string, dbUrl?: string): GetDatabase;
     collection(path: string): RNMTCollection;
     auth(): RNMTAuth;

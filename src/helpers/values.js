@@ -13,7 +13,8 @@ export const CACHE_STORAGE_PATH = encodeBinary('MOSQUITO_TRANSPORT_FREEZER'),
 
 export const CACHE_PROTOCOL = {
     ASYNC_STORAGE: 'async-storage',
-    REACT_NATIVE_FS: 'reat-native-fs'
+    REACT_NATIVE_FS: 'reat-native-fs',
+    SQLITE: 'sqlite' // TODO:
 };
 
 export const RETRIEVAL = {
@@ -43,8 +44,8 @@ export const WRITE_OPS = {
     $MAX: '$max',
     $MIN: '$min',
     $MUL: '$mul',
-    $RENAME: '$rename'
-    // $SET_ON_INSERT: '$setOnInsert'
+    $RENAME: '$rename',
+    $SET_ON_INSERT: '$setOnInsert'
 };
 export const WRITE_OPS_LIST = Object.values(WRITE_OPS);
 
