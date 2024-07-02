@@ -291,6 +291,7 @@ interface DocumentFind {
     $or?: any[];
     $text?: {
         $search: string;
+        $field: string;
         $language?: string;
         $caseSensitive?: boolean;
         $diacriticSensitive?: boolean;
@@ -320,8 +321,11 @@ interface RNMTAuth {
     listenVerifiedStatus: (callback?: (verified?: boolean) => void, onError?: (error?: ErrorResponse) => void) => () => void;
     listenAuthToken: (callback: (token: string) => void) => () => void;
     getAuthToken: () => Promise<string>;
-    listenAuth: (callback: (auth: AuthData) => void) => () => void;
-    getAuth: () => Promise<AuthData>;
+    getRefreshToken: () => Promise<string>;
+    getRefreshTokenData: () => Promise<RefreshTokenData>;
+    parseToken: () => string;
+    listenAuth: (callback: (auth: TokenEventData) => void) => () => void;
+    getAuth: () => Promise<TokenEventData>;
     signOut: () => Promise<void>;
     forceRefreshToken: () => Promise<string>;
 }
@@ -342,14 +346,35 @@ interface AuthData {
     signupMethod: 'google' | 'apple' | 'custom' | 'github' | 'twitter' | 'facebook' | string;
     currentAuthMethod: 'google' | 'apple' | 'custom' | 'github' | 'twitter' | 'facebook' | string;
     joinedOn: number;
-    encryptionKey: string;
     uid: string;
     claims: Object;
     emailVerified: boolean;
+    tokenID: string;
+    disabled: boolean;
+    entityOf: string;
     profile: {
         photo: string;
         name: string;
-    }
+    },
+    exp: number;
+    aud: string;
+    iss: string;
+    sub: string;
+}
+
+interface RefreshTokenData {
+    uid: string;
+    tokenID: string;
+    isRefreshToken: true;
+}
+
+interface TokenEventData extends AuthData {
+    tokenManager: TokenManager | null;
+}
+
+interface TokenManager {
+    refreshToken: string;
+    accessToken: string;
 }
 
 interface RNMTStorage {
