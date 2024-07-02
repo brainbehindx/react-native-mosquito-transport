@@ -2,8 +2,8 @@ import setLargeTimeout from "set-large-timeout";
 import { doSignOut } from ".";
 import EngineApi from "../../helpers/EngineApi";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
-import { decodeBinary, deserializeE2E, listenReachableServer, simplifyCaughtError } from "../../helpers/peripherals";
-import { awaitReachableServer, awaitStore, buildFetchInterface, simplifyError, updateCacheStore } from "../../helpers/utils";
+import { decodeBinary, deserializeE2E, listenReachableServer } from "../../helpers/peripherals";
+import { awaitStore, buildFetchInterface, simplifyError, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 
 export const listenToken = (callback, projectUrl) =>

@@ -104,6 +104,13 @@ export class MTAuth {
 
     listenAuthToken = (callback) => listenToken(callback, this.builder.projectUrl);
 
+    getRefreshToken = async () => {
+        await awaitStore();
+        return CacheStore.AuthStore[this.builder.projectUrl]?.refreshToken;
+    }
+    
+    parseToken = (token) => parseToken(token);
+
     getAuthToken = () => new Promise(resolve => {
         const l = listenToken(t => {
             l();
