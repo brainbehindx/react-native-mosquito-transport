@@ -1,6 +1,6 @@
 {
   "name": "react-native-mosquito-transport",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "React native javascript sdk for mosquito-transport (https://github.com/deflexable/mosquito-transport)",
   "main": "src/index.js",
   "scripts": {
