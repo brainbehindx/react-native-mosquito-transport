@@ -25,6 +25,43 @@ interface mtimestamp { $timestamp: 'now' }
 export const TIMESTAMP: mtimestamp;
 export function DOCUMENT_EXTRACTION(path: string): { $dynamicValue: number };
 
+type longitude = number;
+type latitude = number;
+
+export function GEO_JSON(latitude: latitude, longitude: longitude): {
+    type: "Point",
+    coordinates: [longitude, latitude],
+};
+
+export function FIND_GEO_JSON(coordinates: [latitude, longitude], offSetMeters: number, centerMeters?: number): {
+    $near: {
+        $geometry: {
+            type: "Point",
+            coordinates: [longitude, latitude]
+        },
+        $minDistance: number | 0,
+        $maxDistance: number
+    }
+};
+
+export const AUTH_PROVIDER_ID: auth_provider_id;
+
+interface auth_provider_id {
+    GOOGLE: 'google.com';
+    FACEBOOK: 'facebook.com';
+    PASSWORD: 'password';
+    TWITTER: 'x.com';
+    GITHUB: 'github.com';
+    APPLE: 'apple.com';
+}
+
+type auth_provider_id_values = auth_provider_id['GOOGLE'] |
+    auth_provider_id['FACEBOOK'] |
+    auth_provider_id['PASSWORD'] |
+    auth_provider_id['GITHUB'] |
+    auth_provider_id['TWITTER'] |
+    auth_provider_id['APPLE'];
+
 interface ReleaseCacheOption_IO {
     /**
      * This password will be used to encrypt data stored locally
@@ -343,8 +380,8 @@ interface SignupResult extends SigninResult {
 interface AuthData {
     email?: string;
     metadata: Object;
-    signupMethod: 'google' | 'apple' | 'custom' | 'github' | 'twitter' | 'facebook' | string;
-    currentAuthMethod: 'google' | 'apple' | 'custom' | 'github' | 'twitter' | 'facebook' | string;
+    signupMethod: auth_provider_id_values;
+    currentAuthMethod: auth_provider_id_values;
     joinedOn: number;
     uid: string;
     claims: Object;

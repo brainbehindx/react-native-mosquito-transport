@@ -118,6 +118,9 @@ export class MTAuth {
         }, this.builder.projectUrl);
     });
 
+    /**
+     * @type {import('../../index').RNMTAuth['listenAuth']}
+     */
     listenAuth = (callback) => {
         let lastTrig;
 
