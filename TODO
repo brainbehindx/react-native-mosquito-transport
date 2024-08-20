@@ -1,3 +1,4 @@
 - fix local cache query on sqlite and fs
 - fix and add all mongodb query and update operator
 - reauthenticate
+- change `Object` in d.ts to [key: string]: any

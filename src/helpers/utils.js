@@ -16,7 +16,7 @@ export const updateCacheStore = () => {
         );
 
         if (io) {
-            io.ouput(txt);
+            io.output(txt);
         } else if (cacheProtocol === CACHE_PROTOCOL.ASYNC_STORAGE) {
             AsyncStorage.setItem(CACHE_STORAGE_PATH, txt);
         } else {

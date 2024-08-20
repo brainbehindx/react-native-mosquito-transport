@@ -2,10 +2,10 @@ import { IS_RAW_OBJECT, objToUniqueString, queryEntries, shuffleArray, sortArray
 import { awaitStore, updateCacheStore } from "../../helpers/utils";
 import { CacheStore } from "../../helpers/variables";
 import { confirmFilterDoc } from "./validator";
-import getLodash from 'lodash/get';
-import setLodash from 'lodash/set';
-import unsetLodash from 'lodash/unset';
-import isEqual from 'lodash/isEqual';
+import getLodash from 'lodash.get';
+import setLodash from 'lodash.set';
+import unsetLodash from 'lodash.unset';
+import isEqual from 'lodash.isequal';
 import { DEFAULT_DB_NAME, DEFAULT_DB_URL, DELIVERY, RETRIEVAL, WRITE_OPS, WRITE_OPS_LIST } from "../../helpers/values";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
 

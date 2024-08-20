@@ -8,7 +8,7 @@ import { addPendingWrites, generateRecordID, getRecord, insertRecord, listenQuer
 import { validateCollectionPath, validateFilter, validateReadConfig, validateWriteValue } from "./validator";
 import { awaitRefreshToken, listenToken } from "../auth/accessor";
 import { DEFAULT_DB_NAME, DEFAULT_DB_URL, DELIVERY, RETRIEVAL } from "../../helpers/values";
-import setLodash from 'lodash/set';
+import setLodash from 'lodash.set';
 
 export class MTCollection {
     constructor(config) {

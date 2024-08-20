@@ -70,4 +70,13 @@ export const READ_OPS_LIST = Object.values(READ_OPS);
 
 export const Regexs = {
     LINK: () => /(\b(https?|ftp):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig
-}
+};
+
+export const AUTH_PROVIDER_ID = {
+    GOOGLE: 'google.com',
+    FACEBOOK: 'facebook.com',
+    PASSWORD: 'password',
+    TWITTER: 'x.com',
+    GITHUB: 'github.com',
+    APPLE: 'apple.com'
+};

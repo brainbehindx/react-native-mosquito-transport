@@ -1,7 +1,7 @@
 import { IS_DECIMAL_NUMBER, IS_RAW_OBJECT, IS_WHOLE_NUMBER, queryEntries } from "../../helpers/peripherals";
 import { READ_OPS, READ_OPS_LIST, RETRIEVAL } from "../../helpers/values";
-import getLodash from 'lodash/get';
-import isEqual from 'lodash/isEqual';
+import getLodash from 'lodash.get';
+import isEqual from 'lodash.isequal';
 
 const dirn = ['desc', 'asc', 'ascending', 'descending'];
 
