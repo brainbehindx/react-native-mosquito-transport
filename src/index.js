@@ -60,7 +60,7 @@ class RNMT {
                 lastUid = thisUid;
 
                 if (lastSocketProcess) disconnectionGlich[lastSocketProcess] = true;
-                socket.close();
+                if (socket) socket.close();
 
                 const thisProcess = ++lastSocketProcess;
                 socket = io(`${this.config.wsPrefix}://${projectUrl.split('://')[1]}`, {
