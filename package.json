@@ -1,6 +1,6 @@
 {
   "name": "react-native-mosquito-transport",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "description": "React native javascript sdk for mosquito-transport (https://github.com/deflexable/mosquito-transport)",
   "main": "src/index.js",
   "scripts": {
@@ -15,7 +15,6 @@
     "javascript",
     "selfhosted",
     "serverless",
-    "Baas",
     "database",
     "react-native",
     "mongodb"
@@ -32,7 +31,7 @@
     "buffer": "^6.0.3",
     "crypto-js": "^4.2.0",
     "fast-json-stable-stringify": "^2.1.0",
-    "guard-object": "^1.0.6",
+    "guard-object": "^1.0.7",
     "json-buffer": "^3.0.1",
     "lodash.get": "^4.4.2",
     "lodash.isequal": "^4.5.0",

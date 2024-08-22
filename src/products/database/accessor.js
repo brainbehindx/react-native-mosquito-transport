@@ -36,8 +36,9 @@ export const insertRecord = async (builder, accessId, query, value) => {
         kaf = `${objToUniqueString(extraction || {})},${(excludeFields || []).join(',')},${(returnOnly || []).join(',')}`,
         colData = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'data', kaf], []);
 
+    // TODO:
     (Array.isArray(value) ? value : [value]).forEach(e => {
-        const b4DocIndex = colData.findIndex(v => v._id === e._id);
+        const b4DocIndex = colData.findIndex(v => v?._id === e?._id);
         if (b4DocIndex === -1) {
             colData.push(e);
         } else colData[b4DocIndex] = e;
