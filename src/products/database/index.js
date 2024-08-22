@@ -150,7 +150,7 @@ const listenDocument = (callback, onError, builder, config) => {
         const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
             authObj = {
                 commands: {
-                    config,
+                    config: stripRequestConfig(config),
                     path,
                     find: findOne || find,
                     sort,
@@ -368,6 +368,14 @@ const countCollection = async (builder, config) => {
     return g;
 }
 
+const stripRequestConfig = (config) => {
+    const known_fields = ['extraction', 'returnOnly', 'excludeFields'];
+    const requestConfig = Object.entries({ ...config }).map(([k, v]) =>
+        known_fields.includes(k) ? [k, v] : null
+    ).filter(v => v);
+    return requestConfig.length ? Object.fromEntries(requestConfig) : undefined;
+}
+
 const findObject = async (builder, config) => {
     const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, disableCache, uglify, command } = builder,
         { find, findOne, sort, direction, limit, random } = command,
@@ -445,7 +453,15 @@ const findObject = async (builder, config) => {
 
             const [reqBuilder, [privateKey]] = buildFetchInterface({
                 body: {
-                    commands: { config, path, find: findOne || find, sort, direction, limit, random },
+                    commands: {
+                        config: stripRequestConfig(config),
+                        path,
+                        find: findOne || find,
+                        sort,
+                        direction,
+                        limit,
+                        random
+                    },
                     dbName,
                     dbUrl
                 },
