@@ -6,7 +6,7 @@ import { MTAuth } from "./products/auth";
 import { MTCollection, batchWrite } from "./products/database";
 import { MTStorage } from "./products/storage";
 import { ServerReachableListener, TokenRefreshListener } from "./helpers/listeners";
-import { initTokenRefresher, listenToken, listenTokenReady, parseToken, triggerAuthToken } from "./products/auth/accessor";
+import { initTokenRefresher, listenToken, listenTokenReady, triggerAuthToken } from "./products/auth/accessor";
 import { TIMESTAMP, DOCUMENT_EXTRACTION, FIND_GEO_JSON, GEO_JSON } from "./products/database/types";
 import { mfetch } from "./products/http_callable";
 import { io } from "socket.io-client";
@@ -48,40 +48,42 @@ class RNMT {
             triggerAuthToken(projectUrl);
             initTokenRefresher({ ...this.config }, true);
 
-            const disconnectionGlich = {};
-            let socket, lastUid, lastSocketProcess = 0, hasInited;
+            let isConnected, lastSentToken, queuedToken;
 
-            listenToken((token, thisInited) => {
-                const user = token && parseToken(token);
+            const socket = io(`${this.config.wsPrefix}://${projectUrl.split('://')[1]}`, {
+                auth: {
+                    _m_internal: true,
+                    _from_base: true
+                }
+            });
 
-                const thisUid = (user?.uid || null);
-                if (lastUid === thisUid && (hasInited || !thisInited)) return;
-                if (!hasInited) hasInited = thisInited;
-                lastUid = thisUid;
+            socket.on('_signal_signout', () => {
+                this.auth().signOut();
+            });
 
-                if (lastSocketProcess) disconnectionGlich[lastSocketProcess] = true;
-                if (socket) socket.close();
+            socket.on('connect', () => {
+                isConnected = true;
+                if (queuedToken) updateMountedToken(queuedToken.token);
+                ServerReachableListener.dispatch(projectUrl, true);
+            });
 
-                const thisProcess = ++lastSocketProcess;
-                socket = io(`${this.config.wsPrefix}://${projectUrl.split('://')[1]}`, {
-                    auth: {
-                        _m_internal: true,
-                        _from_base: true,
-                        atoken: token
-                    }
-                });
+            socket.on('disconnect', () => {
+                isConnected = false;
+                ServerReachableListener.dispatch(projectUrl, false);
+            });
 
-                socket.on('_signal_signout', () => {
-                    this.auth().signOut();
-                });
+            const updateMountedToken = (token) => {
+                if ((lastSentToken || null) !== (token || null)) {
+                    socket.emit('_update_mounted_user', token || null);
+                    lastSentToken = token;
+                }
+                queuedToken = undefined;
+            }
 
-                socket.on('connect', () => {
-                    ServerReachableListener.dispatch(projectUrl, true);
-                });
-                socket.on('disconnect', () => {
-                    if (!disconnectionGlich[thisProcess])
-                        ServerReachableListener.dispatch(projectUrl, false);
-                });
+            listenToken(token => {
+                if (isConnected) {
+                    updateMountedToken(token);
+                } else queuedToken = { token };
             }, projectUrl);
 
             listenReachableServer(c => {

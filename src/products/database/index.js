@@ -69,8 +69,8 @@ export class MTCollection {
         updateMany: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'updateMany'),
         mergeOne: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'mergeOne'),
         mergeMany: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'mergeMany'),
-        deleteOne: (find) => initOnDisconnectionTask({ ...this.builder, command: { find } }, null, 'deleteOne'),
-        deleteMany: (find) => initOnDisconnectionTask({ ...this.builder, command: { find } }, null, 'deleteMany'),
+        deleteOne: (find) => initOnDisconnectionTask({ ...this.builder, command: { find } }, undefined, 'deleteOne'),
+        deleteMany: (find) => initOnDisconnectionTask({ ...this.builder, command: { find } }, undefined, 'deleteMany'),
         replaceOne: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'replaceOne'),
         putOne: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'putOne')
     })
@@ -91,9 +91,9 @@ export class MTCollection {
 
     putOne = (find, value, config) => commitData({ ...this.builder, find }, value, 'putOne', config);
 
-    deleteOne = (find, config) => commitData({ ...this.builder, find }, null, 'deleteOne', config);
+    deleteOne = (find, config) => commitData({ ...this.builder, find }, undefined, 'deleteOne', config);
 
-    deleteMany = (find, config) => commitData({ ...this.builder, find }, null, 'deleteMany', config);
+    deleteMany = (find, config) => commitData({ ...this.builder, find }, undefined, 'deleteMany', config);
 }
 
 export const batchWrite = (builder, map, config) => commitData({ ...builder }, map, 'batchWrite', config);

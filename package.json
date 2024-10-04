@@ -1,6 +1,6 @@
 {
   "name": "react-native-mosquito-transport",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "React native javascript sdk for mosquito-transport (https://github.com/deflexable/mosquito-transport)",
   "main": "src/index.js",
   "scripts": {
@@ -31,7 +31,7 @@
     "buffer": "^6.0.3",
     "crypto-js": "^4.2.0",
     "fast-json-stable-stringify": "^2.1.0",
-    "guard-object": "^1.0.7",
+    "guard-object": "^1.0.9",
     "json-buffer": "^3.0.1",
     "lodash.get": "^4.4.2",
     "lodash.isequal": "^4.5.0",
@@ -43,7 +43,8 @@
     "subscription-listener": "^1.1.2",
     "tweetnacl": "^1.0.3"
   },
-  "engines": {
-    "node": ">= 16.0.0"
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
   }
 }
