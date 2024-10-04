@@ -2,3 +2,5 @@
 - fix and add all mongodb query and update operator
 - reauthenticate
 - change `Object` in d.ts to [key: string]: any
+- add `getServerTimeOffset` method
+- change null to undefined in `value`

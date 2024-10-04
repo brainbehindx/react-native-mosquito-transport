@@ -5,3 +5,9 @@ npm-debug.log
 yarn-debug.log
 yarn-error.log
 yarn.lock
+# OSX
+#
+.DS_Store
+*/ios/build
+*/ios/Pods
+Podfile.lock
