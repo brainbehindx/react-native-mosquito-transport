@@ -11,7 +11,7 @@ export const GEO_JSON = (lat, lng) => ({
 });
 
 export const FIND_GEO_JSON = (location, offSetMeters, centerMeters) => ({
-    $near: {
+    $nearSphere: {
         $geometry: {
             type: "Point",
             coordinates: location.reverse()

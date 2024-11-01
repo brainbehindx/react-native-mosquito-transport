@@ -1,21 +1,26 @@
 import { io } from "socket.io-client";
-import EngineApi from "../../helpers/EngineApi";
+import EngineApi from "../../helpers/engine_api";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
-import { IS_WHOLE_NUMBER, cloneInstance, deserializeE2E, listenReachableServer, niceTry, serializeE2E, simplifyCaughtError } from "../../helpers/peripherals";
+import { deserializeE2E, listenReachableServer, niceTry, serializeE2E } from "../../helpers/peripherals";
 import { awaitStore, buildFetchInterface, getReachableServer } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
-import { addPendingWrites, generateRecordID, getRecord, insertRecord, listenQueryEntry, removePendingWrite } from "./accessor";
-import { validateCollectionPath, validateFilter, validateReadConfig, validateWriteValue } from "./validator";
+import { addPendingWrites, generateRecordID, getRecord, insertRecord, listenQueryEntry, removePendingWrite, validateWriteValue } from "./accessor";
+import { validateCollectionName, validateFilter, validateFindConfig, validateFindObject, validateListenFindConfig } from "./validator";
 import { awaitRefreshToken, listenToken } from "../auth/accessor";
-import { DEFAULT_DB_NAME, DEFAULT_DB_URL, DELIVERY, RETRIEVAL } from "../../helpers/values";
+import { DELIVERY, RETRIEVAL } from "../../helpers/values";
 import setLodash from 'lodash.set';
+import { ObjectId } from "bson";
+import { guardObject, Validator } from "guard-object";
+import { simplifyCaughtError } from "simplify-error";
+import cloneDeep from "lodash.clonedeep";
+import { deserializeBSON, serializeToBase64 } from "./bson";
 
 export class MTCollection {
     constructor(config) {
         this.builder = { ...config };
     }
 
-    find = (find) => ({
+    find = (find = {}) => ({
         get: (config) => findObject({ ...this.builder, command: { find } }, config),
         listen: (callback, error, config) => listenDocument(callback, error, { ...this.builder, command: { find } }, config),
         count: (config) => countCollection({ ...this.builder, command: { find } }, config),
@@ -51,11 +56,11 @@ export class MTCollection {
 
     limit = (limit) => this.find().limit(limit);
 
-    count = (config) => countCollection({ ...this.builder }, config);
+    count = (config) => this.find().count(config);
 
-    get = (config) => findObject({ ...this.builder }, config);
+    get = (config) => this.find().get(config);
 
-    listen = (callback, error, config) => listenDocument(callback, error, { ...this.builder }, config);
+    listen = (callback, error, config) => this.find().listen(callback, error, config);
 
     findOne = (findOne = {}) => ({
         listen: (callback, error, config) => listenDocument(callback, error, { ...this.builder, command: { findOne } }, config),
@@ -65,36 +70,50 @@ export class MTCollection {
     onDisconnect = () => ({
         setOne: (value) => initOnDisconnectionTask({ ...this.builder }, value, 'setOne'),
         setMany: (value) => initOnDisconnectionTask({ ...this.builder }, value, 'setMany'),
-        updateOne: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'updateOne'),
-        updateMany: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'updateMany'),
-        mergeOne: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'mergeOne'),
-        mergeMany: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'mergeMany'),
-        deleteOne: (find) => initOnDisconnectionTask({ ...this.builder, command: { find } }, undefined, 'deleteOne'),
-        deleteMany: (find) => initOnDisconnectionTask({ ...this.builder, command: { find } }, undefined, 'deleteMany'),
-        replaceOne: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'replaceOne'),
-        putOne: (find, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'putOne')
-    })
+        updateOne: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'updateOne'),
+        updateMany: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'updateMany'),
+        mergeOne: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'mergeOne'),
+        mergeMany: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'mergeMany'),
+        deleteOne: (find = {}) => initOnDisconnectionTask({ ...this.builder, command: { find } }, undefined, 'deleteOne'),
+        deleteMany: (find = {}) => initOnDisconnectionTask({ ...this.builder, command: { find } }, undefined, 'deleteMany'),
+        replaceOne: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'replaceOne'),
+        putOne: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'putOne')
+    });
 
     setOne = (value, config) => commitData(this.builder, value, 'setOne', config);
 
     setMany = (value, config) => commitData(this.builder, value, 'setMany', config);
 
-    updateOne = (find, value, config) => commitData({ ...this.builder, find }, value, 'updateOne', config);
+    addOne = (value, config) => commitData(
+        this.builder,
+        Validator.OBJECT(value) ? { ...value, _id: new ObjectId() } : value,
+        'setOne',
+        config
+    );
 
-    updateMany = (find, value, config) => commitData({ ...this.builder, find }, value, 'updateMany', config);
+    addMany = (value, config) => commitData(
+        this.builder,
+        value.map(v => Validator.OBJECT(v) ? ({ ...v, _id: new ObjectId() }) : v),
+        'setMany',
+        config
+    );
 
-    mergeOne = (find, value, config) => commitData({ ...this.builder, find }, value, 'mergeOne', config);
+    updateOne = (find = {}, value, config) => commitData({ ...this.builder, find }, value, 'updateOne', config);
 
-    mergeMany = (find, value, config) => commitData({ ...this.builder, find }, value, 'mergeMany', config);
+    updateMany = (find = {}, value, config) => commitData({ ...this.builder, find }, value, 'updateMany', config);
 
-    replaceOne = (find, value, config) => commitData({ ...this.builder, find }, value, 'replaceOne', config);
+    mergeOne = (find = {}, value, config) => commitData({ ...this.builder, find }, value, 'mergeOne', config);
 
-    putOne = (find, value, config) => commitData({ ...this.builder, find }, value, 'putOne', config);
+    mergeMany = (find = {}, value, config) => commitData({ ...this.builder, find }, value, 'mergeMany', config);
 
-    deleteOne = (find, config) => commitData({ ...this.builder, find }, undefined, 'deleteOne', config);
+    replaceOne = (find = {}, value, config) => commitData({ ...this.builder, find }, value, 'replaceOne', config);
 
-    deleteMany = (find, config) => commitData({ ...this.builder, find }, undefined, 'deleteMany', config);
-}
+    putOne = (find = {}, value, config) => commitData({ ...this.builder, find }, value, 'putOne', config);
+
+    deleteOne = (find = {}, config) => commitData({ ...this.builder, find }, undefined, 'deleteOne', config);
+
+    deleteMany = (find = {}, config) => commitData({ ...this.builder, find }, undefined, 'deleteMany', config);
+};
 
 export const batchWrite = (builder, map, config) => commitData({ ...builder }, map, 'batchWrite', config);
 
@@ -111,16 +130,16 @@ const {
 } = EngineApi;
 
 const listenDocument = (callback, onError, builder, config) => {
-    const { projectUrl, wsPrefix, serverE2E_PublicKey, baseUrl, dbUrl, dbName, accessKey, path, disableCache, command, uglify } = builder,
-        { find, findOne, sort, direction, limit } = command,
-        { disableAuth } = config || {},
-        accessId = generateRecordID(builder, config),
-        shouldCache = !disableCache,
-        processId = `${++Scoped.AnyProcessIte}`;
+    const { projectUrl, wsPrefix, serverE2E_PublicKey, baseUrl, dbUrl, dbName, accessKey, path, disableCache, command, uglify, castBSON } = builder;
+    const { find, findOne, sort, direction, limit } = command;
+    const { disableAuth } = config || {};
+    const accessId = generateRecordID(builder, config);
+    const shouldCache = !disableCache;
+    const processId = `${++Scoped.AnyProcessIte}`;
 
-    validateReadConfig(config, ['retrieval', 'disableAuth']);
+    validateListenFindConfig(config);
     validateFilter(findOne || find);
-    validateCollectionPath(path);
+    validateCollectionName(path);
 
     let hasCancelled,
         hasRespond,
@@ -129,17 +148,29 @@ const listenDocument = (callback, onError, builder, config) => {
         wasDisconnected,
         lastToken = Scoped.AuthJWTToken[projectUrl] || null,
         lastInitRef = 0,
-        connectedListener;
+        connectedListener,
+        lastSnapshot;
+
+    const dispatchSnapshot = s => {
+        const thisSnapshotId = serializeToBase64({ _: s });
+        if (thisSnapshotId === lastSnapshot) return;
+        lastSnapshot = thisSnapshotId;
+        callback?.(cloneDeep(transformBSON(s, castBSON)));
+    };
 
     if (shouldCache) {
-        cacheListener = listenQueryEntry(callback, { accessId, builder, config, processId });
+        cacheListener = listenQueryEntry(snapshot => {
+            if (!Scoped.IS_CONNECTED[projectUrl]) dispatchSnapshot(snapshot);
+        }, { accessId, builder, config, processId });
 
-        connectedListener = listenReachableServer(async connected => {
-            connectedListener();
-            await awaitStore();
-            if (!connected && !hasRespond && !hasCancelled && shouldCache)
-                DatabaseRecordsListener.dispatch(accessId, processId);
-        }, projectUrl);
+        awaitStore().then(() => {
+            if (hasCancelled) return;
+            connectedListener = listenReachableServer(async connected => {
+                connectedListener();
+                if (!connected && !hasRespond && !hasCancelled && shouldCache)
+                    DatabaseRecordsListener.dispatch('d', processId);
+            }, projectUrl);
+        });
     }
 
     const init = async () => {
@@ -147,23 +178,25 @@ const listenDocument = (callback, onError, builder, config) => {
         if (!disableAuth) await awaitRefreshToken(projectUrl);
         if (hasCancelled || processID !== lastInitRef) return;
 
-        const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
-            authObj = {
-                commands: {
-                    config: stripRequestConfig(config),
-                    path,
-                    find: findOne || find,
-                    sort,
-                    direction,
-                    limit
-                },
-                dbName,
-                dbUrl
-            };
+        const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
+        const pureConfig = stripRequestConfig(config);
+        const authObj = {
+            commands: {
+                config: pureConfig && serializeToBase64(pureConfig),
+                path,
+                find: serializeToBase64(findOne || find),
+                sort,
+                direction,
+                limit
+            },
+            dbName,
+            dbUrl
+        };
 
         const [encPlate, [privateKey]] = uglify ? serializeE2E({ accessKey, _body: authObj }, mtoken, serverE2E_PublicKey) : ['', []];
 
         socket = io(`${wsPrefix}://${baseUrl}`, {
+            transports: ['websocket', 'polling', 'flashsocket'],
             auth: uglify ? { e2e: encPlate, _m_internal: true } : {
                 accessKey,
                 _body: authObj,
@@ -179,10 +212,10 @@ const listenDocument = (callback, onError, builder, config) => {
                 onError?.(simplifyCaughtError(err).simpleError);
             } else {
                 if (uglify) snapshot = deserializeE2E(snapshot, serverE2E_PublicKey, privateKey);
-                callback?.(snapshot);
+                snapshot = deserializeBSON(snapshot)._;
+                dispatchSnapshot(snapshot);
 
-                if (shouldCache)
-                    insertRecord(builder, accessId, { sort, direction, limit, find, findOne, config }, snapshot);
+                if (shouldCache) insertRecord(builder, config, accessId, snapshot);
             }
         });
 
@@ -214,14 +247,16 @@ const listenDocument = (callback, onError, builder, config) => {
         tokenListener?.();
         if (socket) socket.close();
     }
-}
+};
 
 const initOnDisconnectionTask = (builder, value, type) => {
-    const { projectUrl, wsPrefix, baseUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, path, command, uglify } = builder,
-        { find } = command || {},
-        disableAuth = false;
+    const { projectUrl, wsPrefix, baseUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, path, command, uglify } = builder;
+    const { find } = command || {};
+    const disableAuth = false;
 
-    validateCollectionPath(path);
+    validateCollectionName(path);
+    validateWriteValue({ type, find, value });
+
     let hasCancelled,
         socket,
         wasDisconnected,
@@ -233,14 +268,20 @@ const initOnDisconnectionTask = (builder, value, type) => {
         if (!disableAuth) await awaitRefreshToken(projectUrl);
         if (hasCancelled || processID !== lastInitRef) return;
 
-        const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
-            authObj = {
-                commands: { path, find, value, scope: type },
-                dbName,
-                dbUrl
-            };
+        const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
+        const authObj = {
+            commands: {
+                path,
+                find: find && serializeToBase64(find),
+                value: value && serializeToBase64({ _: value }),
+                scope: type
+            },
+            dbName,
+            dbUrl
+        };
 
         socket = io(`${wsPrefix}://${baseUrl}`, {
+            transports: ['websocket', 'polling', 'flashsocket'],
             auth: uglify ? {
                 e2e: serializeE2E(authObj, mtoken, serverE2E_PublicKey)[0],
                 _m_internal: true
@@ -267,7 +308,7 @@ const initOnDisconnectionTask = (builder, value, type) => {
     const tokenListener = listenToken(async t => {
         if ((t || null) !== lastToken) {
             if (socket) {
-                await niceTry(() => socket.timeout(10000).emitWithAck(_cancelDisconnectWriteTask(uglify)));
+                await niceTry(() => socket.timeout(7000).emitWithAck(_cancelDisconnectWriteTask(uglify)));
                 socket.close();
             }
             wasDisconnected = undefined;
@@ -280,31 +321,26 @@ const initOnDisconnectionTask = (builder, value, type) => {
         if (hasCancelled) return;
         tokenListener();
         if (socket)
-            (async () => {
-                await niceTry(() => socket.timeout(10000).emitWithAck(_cancelDisconnectWriteTask(uglify)));
+            niceTry(() => socket.timeout(7000).emitWithAck(_cancelDisconnectWriteTask(uglify))).then(() => {
                 socket.close();
-            })();
+            });
         hasCancelled = true;
-    }
-}
+    };
+};
 
 const countCollection = async (builder, config) => {
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, uglify, path, disableCache, command = {} } = builder,
-        { find } = command,
-        { disableAuth } = config || {},
-        accessId = generateRecordID({ ...builder, countDoc: true }, config);
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, uglify, path, disableCache, command = {} } = builder;
+    const { find } = command;
+    const { disableAuth } = config || {};
+    const accessId = generateRecordID({ ...builder, countDoc: true }, config);
 
     await awaitStore();
-    validateReadConfig(config, [
-        'excludeFields',
-        'returnOnly',
-        'extraction',
-        'episode',
-        'retrieval',
-        'disableMinimizer'
-    ]);
-    validateFilter(find || {});
-    validateCollectionPath(path);
+    if (config !== undefined)
+        guardObject({
+            disableAuth: t => t === undefined || Validator.BOOLEAN(t)
+        }).validate(config);
+    validateFilter(find);
+    validateCollectionName(path);
 
     let retries = 0;
 
@@ -312,17 +348,18 @@ const countCollection = async (builder, config) => {
         ++retries;
 
         const finalize = (a, b) => {
-            if (isNaN(a)) {
+            if (Validator.NUMBER(a)) {
                 reject(b);
             } else resolve(a);
-        }
+        };
 
         try {
-            if (!disableAuth && await getReachableServer(projectUrl)) await awaitRefreshToken(projectUrl);
+            if (!disableAuth && await getReachableServer(projectUrl))
+                await awaitRefreshToken(projectUrl);
 
             const [reqBuilder, [privateKey]] = buildFetchInterface({
                 body: {
-                    commands: { path, find },
+                    commands: { path, find: serializeToBase64(find) },
                     dbName,
                     dbUrl
                 },
@@ -338,15 +375,15 @@ const countCollection = async (builder, config) => {
             const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
 
             if (!disableCache)
-                setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl || DEFAULT_DB_URL, dbName || DEFAULT_DB_NAME, accessId], f.result);
+                setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl, dbName, accessId], f.result);
 
             finalize(f.result);
         } catch (e) {
-            const b4Data = setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl || DEFAULT_DB_URL, dbName || DEFAULT_DB_NAME, accessId]);
+            const b4Data = setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl, dbName, accessId]);
 
             if (e?.simpleError) {
                 finalize(undefined, e.simpleError);
-            } else if (!disableCache && !isNaN(b4Data)) {
+            } else if (!disableCache && !Validator.NUMBER(b4Data)) {
                 finalize(b4Data);
             } else if (retries > maxRetries) {
                 finalize(undefined, { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
@@ -364,9 +401,8 @@ const countCollection = async (builder, config) => {
         }
     });
 
-    const g = await readValue();
-    return g;
-}
+    return await readValue();
+};
 
 const stripRequestConfig = (config) => {
     const known_fields = ['extraction', 'returnOnly', 'excludeFields'];
@@ -374,28 +410,29 @@ const stripRequestConfig = (config) => {
         known_fields.includes(k) ? [k, v] : null
     ).filter(v => v);
     return requestConfig.length ? Object.fromEntries(requestConfig) : undefined;
-}
+};
+
+const transformBSON = (d, castBSON) => {
+    if (castBSON) return d && deserializeBSON(serializeToBase64({ _: d }), true)._;
+    return cloneDeep(d);
+};
 
 const findObject = async (builder, config) => {
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, disableCache, uglify, command } = builder,
-        { find, findOne, sort, direction, limit, random } = command,
-        { retrieval = RETRIEVAL.DEFAULT, episode = 0, disableAuth, disableMinimizer } = config || {},
-        enableMinimizer = !disableMinimizer,
-        accessId = generateRecordID(builder, config),
-        processAccessId = `${accessId}${projectUrl}${dbUrl}${dbName}${retrieval}`,
-        getRecordData = () => getRecord(builder, accessId),
-        shouldCache = (retrieval === RETRIEVAL.DEFAULT ? !disableCache : true) &&
-            retrieval !== RETRIEVAL.NO_CACHE_NO_AWAIT;
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, disableCache, uglify, command, castBSON } = builder;
+    const { find, findOne, sort, direction, limit, random } = command;
+    const { retrieval = RETRIEVAL.DEFAULT, episode = 0, disableAuth, disableMinimizer } = config || {};
+    const enableMinimizer = !disableMinimizer;
+    const accessId = generateRecordID(builder, config);
+    const processAccessId = `${accessId}${projectUrl}${dbUrl}${dbName}${retrieval}`;
+    const getRecordData = () => getRecord(builder, config, accessId);
+    const shouldCache = (retrieval !== RETRIEVAL.DEFAULT || !disableCache) &&
+        ![RETRIEVAL.NO_CACHE_NO_AWAIT, RETRIEVAL.NO_CACHE_AWAIT].includes(retrieval);
 
+    const pureConfig = stripRequestConfig(config);
+    validateFindObject(command);
+    validateFindConfig(config);
+    validateCollectionName(path);
     await awaitStore();
-    if (shouldCache) {
-        validateReadConfig(config);
-        validateCollectionPath(path);
-        validateFilter(findOne || find);
-
-        if (typeof limit === 'number' && (!IS_WHOLE_NUMBER(limit) || limit <= 0))
-            throw `limit() has an invalid argument for "${path}", expected a positive whole number but got ${limit}`;
-    }
 
     let retries = 0, hasFinalize;
 
@@ -406,18 +443,18 @@ const findObject = async (builder, config) => {
         const finalize = (a, b) => {
             const res = (instantProcess && a) ?
                 (a.liveResult || a.liveResult === null) ?
-                    (a.liveResult || undefined) :
-                    a.episode[episode] : a;
+                    transformBSON(a.liveResult || undefined, castBSON) :
+                    transformBSON(a.episode[episode], castBSON) : a;
 
             if (a) {
-                resolve(instantProcess ? res : a);
-            } else reject(b);
+                resolve(instantProcess ? cloneDeep(res) : a);
+            } else reject(instantProcess ? cloneDeep(b) : b);
             if (hasFinalize || !instantProcess) return;
             hasFinalize = true;
 
             if (enableMinimizer) {
                 (Scoped.PendingDbReadCollective.pendingResolution[processAccessId] || []).forEach(e => {
-                    e(a ? { result: cloneInstance(res) } : undefined, b);
+                    e(a ? { result: res } : undefined, b);
                 });
                 if (Scoped.PendingDbReadCollective.pendingResolution[processAccessId])
                     delete Scoped.PendingDbReadCollective.pendingResolution[processAccessId];
@@ -435,8 +472,8 @@ const findObject = async (builder, config) => {
                             Scoped.PendingDbReadCollective.pendingResolution[processAccessId] = [];
 
                         Scoped.PendingDbReadCollective.pendingResolution[processAccessId].push((a, b) => {
-                            if (a) resolve(a.result);
-                            else reject(b);
+                            if (a) resolve(cloneDeep(a.result));
+                            else reject(cloneDeep(b));
                         });
                         return;
                     }
@@ -448,15 +485,16 @@ const findObject = async (builder, config) => {
                     if (retrieval !== RETRIEVAL.STICKY_RELOAD) return;
                 }
             }
+
             if (!disableAuth && await getReachableServer(projectUrl))
                 await awaitRefreshToken(projectUrl);
 
             const [reqBuilder, [privateKey]] = buildFetchInterface({
                 body: {
                     commands: {
-                        config: stripRequestConfig(config),
+                        config: pureConfig && serializeToBase64(pureConfig),
                         path,
-                        find: findOne || find,
+                        find: serializeToBase64(findOne || find),
                         sort,
                         direction,
                         limit,
@@ -474,25 +512,29 @@ const findObject = async (builder, config) => {
             const r = await (await fetch((findOne ? _readDocument : _queryCollection)(projectUrl, uglify), reqBuilder)).json();
             if (r.simpleError) throw r;
 
-            const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
+            const result = deserializeBSON((uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r).result)._;
 
-            if (shouldCache) insertRecord(builder, accessId, { ...command, config }, f.result);
-            finalize({ liveResult: f.result || null });
+            if (shouldCache) insertRecord(builder, config, accessId, result);
+            finalize({ liveResult: result || null });
         } catch (e) {
+            let thisRecord;
+            const getThisRecord = async () => thisRecord ? thisRecord.value :
+                (thisRecord = { value: await getRecordData() }).value;
+
             if (e?.simpleError) {
                 finalize(undefined, e?.simpleError);
             } else if (
-                (retrieval === RETRIEVAL.CACHE_NO_AWAIT && !(await getRecordData())) ||
+                (retrieval === RETRIEVAL.CACHE_NO_AWAIT && !(await getThisRecord())) ||
                 retrieval === RETRIEVAL.STICKY_NO_AWAIT ||
                 retrieval === RETRIEVAL.NO_CACHE_NO_AWAIT
             ) {
                 finalize(undefined, simplifyCaughtError(e).simpleError);
             } else if (
                 shouldCache &&
-                (retrieval === RETRIEVAL.DEFAULT || retrieval === RETRIEVAL.CACHE_NO_AWAIT) &&
-                await getRecordData()
+                [RETRIEVAL.DEFAULT, RETRIEVAL.CACHE_NO_AWAIT].includes(retrieval) &&
+                await getThisRecord()
             ) {
-                finalize({ episode: await getRecordData() });
+                finalize({ episode: await getThisRecord() });
             } else if (retries > maxRetries) {
                 finalize(undefined, { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
             } else {
@@ -509,26 +551,50 @@ const findObject = async (builder, config) => {
         }
     });
 
-    const g = await readValue();
-    return g;
+    return await readValue();
 };
 
+const transformNullRecursively = obj => Object.fromEntries(
+    Object.entries(obj).map(([k, v]) =>
+        [k, [undefined, Infinity, NaN].includes(v) ? null : Validator.OBJECT(v) ? transformNullRecursively(v) : v]
+    )
+);
+
 const commitData = async (builder, value, type, config) => {
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, find, disableCache, uglify } = builder,
-        { disableAuth, delivery = DELIVERY.DEFAULT, stepping } = config || {},
-        writeId = `${Date.now() + ++Scoped.PendingIte}`,
-        isBatchWrite = type === 'batchWrite',
-        shouldCache = (delivery === DELIVERY.DEFAULT ? !disableCache : true) &&
-            delivery !== DELIVERY.NO_CACHE &&
-            delivery !== DELIVERY.NO_AWAIT_NO_CACHE &&
-            delivery !== DELIVERY.AWAIT_NO_CACHE;
+    // transform undefined
+    if (Validator.OBJECT(value)) {
+        value = value && deserializeBSON(serializeToBase64({ _: transformNullRecursively(value) }))._;
+    } else if (type === 'batchWrite' && Array.isArray(value)) {
+        value = deserializeBSON(
+            serializeToBase64({
+                _: value.map(v => {
+                    if (Validator.OBJECT(v?.value)) {
+                        v.value = transformNullRecursively(v.value);
+                    } else if (Array.isArray(v?.value)) {
+                        v.value = v.value.map(e =>
+                            Validator.OBJECT(e) ? transformNullRecursively(e) : e
+                        );
+                    }
+                    return v;
+                })
+            })
+        )._;
+    }
+
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, find, disableCache, uglify } = builder;
+    const { disableAuth, delivery = DELIVERY.DEFAULT, stepping } = config || {};
+    const writeId = `${Date.now() + ++Scoped.PendingIte}`;
+    const isBatchWrite = type === 'batchWrite';
+    const shouldCache = (delivery !== DELIVERY.DEFAULT || !disableCache) &&
+        delivery !== DELIVERY.NO_CACHE &&
+        delivery !== DELIVERY.NO_AWAIT_NO_CACHE &&
+        delivery !== DELIVERY.AWAIT_NO_CACHE;
 
     await awaitStore();
     if (shouldCache) {
-        validateCollectionPath(path);
-        // TODO: batchWrite
-        validateWriteValue(value, builder.find, type);
-        await addPendingWrites(builder, writeId, { value, type, find });
+        await addPendingWrites(builder, writeId, { value, type, find, config });
+        Scoped.OutgoingWrites[writeId] = true;
+        await Scoped.dispatchingWritesPromise;
     }
 
     let retries = 0, hasFinalize;
@@ -549,7 +615,11 @@ const commitData = async (builder, value, type, config) => {
             } else reject(b);
             if (hasFinalize || !instantProcess) return;
             hasFinalize = true;
-            if (removeCache && shouldCache) removePendingWrite(builder, writeId, revertCache);
+            if (shouldCache) {
+                if (removeCache) removePendingWrite(builder, writeId, revertCache);
+                if (Scoped.OutgoingWrites[writeId])
+                    delete Scoped.OutgoingWrites[writeId];
+            }
         };
 
         try {
@@ -559,11 +629,11 @@ const commitData = async (builder, value, type, config) => {
             const [reqBuilder, [privateKey]] = buildFetchInterface({
                 body: {
                     commands: {
-                        value,
+                        value: value && serializeToBase64({ _: value }),
                         ...isBatchWrite ? { stepping } : {
                             path,
                             scope: type,
-                            find
+                            find: find && serializeToBase64(find)
                         }
                     },
                     dbName,
@@ -580,24 +650,30 @@ const commitData = async (builder, value, type, config) => {
 
             const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
 
-            finalize({ status: 'sent', committed: f.committed }, undefined, { removeCache: true });
+            finalize({ ...f }, undefined, { removeCache: true });
         } catch (e) {
             if (e?.simpleError) {
                 console.error(`${type} error (${path}), ${e.simpleError?.message}`);
                 finalize(undefined, e?.simpleError, { removeCache: true, revertCache: true });
             } else if (
-                delivery === DELIVERY.NO_AWAIT ||
-                delivery === DELIVERY.CACHE_NO_AWAIT ||
-                delivery === DELIVERY.NO_AWAIT_NO_CACHE ||
-                delivery === DELIVERY.NO_CACHE
+                [
+                    DELIVERY.NO_AWAIT,
+                    DELIVERY.CACHE_NO_AWAIT,
+                    DELIVERY.NO_AWAIT_NO_CACHE,
+                    DELIVERY.NO_CACHE
+                ].includes(delivery)
             ) {
                 finalize(
                     undefined,
                     simplifyCaughtError(e).simpleError,
-                    await getReachableServer(projectUrl) ? { removeCache: true } : null
+                    await getReachableServer(projectUrl) ? { removeCache: true } : undefined
                 );
-            } else if (retries > maxRetries) {
-                finalize(undefined, { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
+            } else if (retries >= maxRetries) {
+                finalize(
+                    undefined,
+                    { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` },
+                    { removeCache: true, revertCache: true }
+                );
             } else {
                 if (delivery === DELIVERY.AWAIT_NO_CACHE) {
                     const onlineListener = listenReachableServer(connected => {
@@ -609,11 +685,36 @@ const commitData = async (builder, value, type, config) => {
                             );
                         }
                     }, projectUrl);
-                } else if (shouldCache) finalize({ status: 'pending' });
+                } else if (shouldCache) finalize({ status: 'queued' });
                 else finalize(undefined, simplifyCaughtError(e).simpleError);
             }
         }
     });
 
     return await sendValue();
-}
+};
+
+export const trySendPendingWrite = (projectUrl) => {
+    if (Scoped.dispatchingWritesPromise) return;
+
+    Scoped.dispatchingWritesPromise = new Promise(async resolve => {
+        const sortedWrite = Object.entries(CacheStore.PendingWrites[projectUrl] || {})
+            .filter(([k]) => !Scoped.OutgoingWrites[k])
+            .sort((a, b) => a[1].addedOn - b[1].addedOn);
+
+        for (const [writeId, { snapshot, builder, attempts = 1 }] of sortedWrite) {
+            try {
+                await commitData(builder, snapshot.value, snapshot.type, { ...snapshot.config, delivery: DELIVERY.NO_AWAIT_NO_CACHE });
+                delete CacheStore.PendingWrites[projectUrl][writeId];
+            } catch (_) {
+                const { maxRetries } = builder;
+                if (!maxRetries || attempts >= maxRetries) {
+                    delete CacheStore.PendingWrites[projectUrl][writeId];
+                }
+            }
+        }
+        resolve();
+        Scoped.dispatchingWritesPromise = undefined;
+        if (sortedWrite.length && await getReachableServer(projectUrl)) trySendPendingWrite(projectUrl);
+    });
+};

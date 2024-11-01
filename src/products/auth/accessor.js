@@ -1,10 +1,10 @@
-import setLargeTimeout from "set-large-timeout";
 import { doSignOut } from ".";
-import EngineApi from "../../helpers/EngineApi";
+import EngineApi from "../../helpers/engine_api";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
 import { decodeBinary, deserializeE2E, listenReachableServer } from "../../helpers/peripherals";
-import { awaitStore, buildFetchInterface, simplifyError, updateCacheStore } from "../../helpers/utils";
+import { awaitStore, buildFetchInterface, getPrefferTime, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
+import { simplifyError } from "simplify-error";
 
 export const listenToken = (callback, projectUrl) =>
     AuthTokenListener.listenTo(projectUrl, (t, n) => {
@@ -18,18 +18,18 @@ export const injectFreshToken = async (config, { token, refreshToken }) => {
     await awaitStore();
     CacheStore.AuthStore[projectUrl] = { token, refreshToken };
     Scoped.AuthJWTToken[projectUrl] = token;
-    updateCacheStore();
+    updateCacheStore(0);
 
     triggerAuthToken(projectUrl);
     initTokenRefresher(config);
-}
+};
 
 export const parseToken = (token) => JSON.parse(decodeBinary(token.split('.')[1]));
 
 export const triggerAuthToken = async (projectUrl, isInit) => {
     await awaitStore();
     AuthTokenListener.dispatch(projectUrl, CacheStore.AuthStore[projectUrl]?.token || null, isInit);
-}
+};
 
 export const awaitRefreshToken = (projectUrl) => new Promise(resolve => {
     const l = TokenRefreshListener.listenTo(projectUrl, v => {
@@ -45,30 +45,34 @@ export const listenTokenReady = (callback, projectUrl) => TokenRefreshListener.l
 export const initTokenRefresher = async (config, forceRefresh) => {
     const { projectUrl, maxRetries } = config;
     await awaitStore();
-    const { token } = CacheStore.AuthStore[projectUrl] || {},
-        tokenInfo = token ? parseToken(token) : undefined;
+    const { token } = CacheStore.AuthStore[projectUrl] || {};
+    const tokenInfo = token && parseToken(token);
 
-    Scoped.TokenRefreshTimer[projectUrl]?.();
+    clearInterval(Scoped.TokenRefreshTimer[projectUrl]);
 
     if (token) {
-        const hasExpire = Date.now() >= (tokenInfo.exp * 1000) - 60000,
-            rizz = () => refreshToken(config, ++Scoped.LastTokenRefreshRef[projectUrl], maxRetries, maxRetries, forceRefresh);
+        const expireOn = (tokenInfo.exp * 1000) - 60000;
+        const hasExpire = getPrefferTime() >= expireOn;
+        const rizz = () => refreshToken(config, ++Scoped.LastTokenRefreshRef[projectUrl], maxRetries, maxRetries, forceRefresh);
 
         if (hasExpire || forceRefresh) {
             TokenRefreshListener.dispatch(projectUrl);
             return rizz();
         } else {
             TokenRefreshListener.dispatch(projectUrl, 'ready');
-            Scoped.TokenRefreshTimer[projectUrl] = setLargeTimeout(() => {
+            Scoped.TokenRefreshTimer[projectUrl] = setInterval(() => {
+                const countdown = expireOn - getPrefferTime();
+                if (countdown > 3000) return;
+                clearInterval(Scoped.TokenRefreshTimer[projectUrl]);
                 TokenRefreshListener.dispatch(projectUrl);
                 rizz();
-            }, ((tokenInfo.exp * 1000) - 60000) - Date.now());
+            }, 3000);
         }
     } else if (forceRefresh) {
         TokenRefreshListener.dispatch(projectUrl, 'ready');
         return simplifyError('no_token_yet', 'No token is available to initiate a refresh').simpleError
     }
-}
+};
 
 const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7, isForceRefresh) => new Promise(async (resolve, reject) => {
     const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
@@ -115,7 +119,7 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
                     lostProcess.simpleError :
                     simplifyError('retry_limit_reached', 'The retry limit has been reach and execution prematurely stopped').simpleError
             );
-            console.error(`refreshToken retry exceeded, waiting for 2min before starting another retry`);
+            console.error(`refreshToken retry limit exceeded`);
         } else {
             const l = listenReachableServer(c => {
                 if (processRef !== Scoped.LastTokenRefreshRef[projectUrl]) {
@@ -123,7 +127,7 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
                     l();
                 } else if (c) {
                     l();
-                    refreshToken(builder, processRef, remainRetries - 1, initialRetries).then(resolve, reject);
+                    refreshToken(builder, processRef, remainRetries - 1, initialRetries, isForceRefresh).then(resolve, reject);
                 }
             }, projectUrl);
         }

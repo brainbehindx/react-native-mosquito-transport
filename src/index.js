@@ -1,20 +1,19 @@
 import 'react-native-get-random-values';
-import { IS_WHOLE_NUMBER, deserializeE2E, listenReachableServer, serializeE2E } from "./helpers/peripherals";
-import { releaseCacheStore } from "./helpers/utils";
+import { deserializeE2E, listenReachableServer, serializeE2E } from "./helpers/peripherals";
+import { awaitStore, releaseCacheStore } from "./helpers/utils";
 import { Scoped } from "./helpers/variables";
 import { MTAuth } from "./products/auth";
-import { MTCollection, batchWrite } from "./products/database";
+import { MTCollection, batchWrite, trySendPendingWrite } from "./products/database";
 import { MTStorage } from "./products/storage";
 import { ServerReachableListener, TokenRefreshListener } from "./helpers/listeners";
 import { initTokenRefresher, listenToken, listenTokenReady, triggerAuthToken } from "./products/auth/accessor";
 import { TIMESTAMP, DOCUMENT_EXTRACTION, FIND_GEO_JSON, GEO_JSON } from "./products/database/types";
 import { mfetch } from "./products/http_callable";
 import { io } from "socket.io-client";
-import { validateCollectionPath } from "./products/database/validator";
-import { AUTH_PROVIDER_ID, CACHE_PROTOCOL, Regexs } from "./helpers/values";
-import { trySendPendingWrite } from "./products/database/accessor";
-import EngineApi from './helpers/EngineApi';
+import { AUTH_PROVIDER_ID, CACHE_PROTOCOL } from "./helpers/values";
+import EngineApi from './helpers/engine_api';
 import { parse, stringify } from 'json-buffer';
+import { Validator } from 'guard-object';
 
 const {
     _listenCollection,
@@ -29,9 +28,9 @@ class RNMT {
         validateMTConfig(config, this);
         this.config = {
             ...config,
-            uglify: config.enableE2E_Encryption,
-            apiUrl: config.projectUrl,
-            projectUrl: config.projectUrl.split('/').slice(0, -1).join('/')
+            castBSON: config.castBSON === undefined || config.castBSON,
+            maxRetries: config.maxRetries || 3,
+            uglify: config.enableE2E_Encryption
         };
         const { projectUrl } = this.config;
 
@@ -48,9 +47,12 @@ class RNMT {
             triggerAuthToken(projectUrl);
             initTokenRefresher({ ...this.config }, true);
 
-            let isConnected, lastSentToken, queuedToken;
+            let isConnected,
+                lastSentToken,
+                queuedToken;
 
-            const socket = io(`${this.config.wsPrefix}://${projectUrl.split('://')[1]}`, {
+            const socket = io(`${this.config.wsPrefix}://${this.config.baseUrl}`, {
+                transports: ['websocket', 'polling', 'flashsocket'],
                 auth: {
                     _m_internal: true,
                     _from_base: true
@@ -63,12 +65,17 @@ class RNMT {
 
             socket.on('connect', () => {
                 isConnected = true;
+                Scoped.IS_CONNECTED[projectUrl] = true;
                 if (queuedToken) updateMountedToken(queuedToken.token);
                 ServerReachableListener.dispatch(projectUrl, true);
+                awaitStore().then(() => {
+                    trySendPendingWrite(projectUrl);
+                });
             });
 
             socket.on('disconnect', () => {
                 isConnected = false;
+                Scoped.IS_CONNECTED[projectUrl] = false;
                 ServerReachableListener.dispatch(projectUrl, false);
             });
 
@@ -78,17 +85,12 @@ class RNMT {
                     lastSentToken = token;
                 }
                 queuedToken = undefined;
-            }
+            };
 
             listenToken(token => {
                 if (isConnected) {
                     updateMountedToken(token);
                 } else queuedToken = { token };
-            }, projectUrl);
-
-            listenReachableServer(c => {
-                Scoped.IS_CONNECTED[projectUrl] = c;
-                if (c) trySendPendingWrite();
             }, projectUrl);
 
             TokenRefreshListener.listenTo(projectUrl, v => {
@@ -108,14 +110,12 @@ class RNMT {
         collection: (path) => new MTCollection({
             ...this.config,
             path,
-            ...(dbName ? { dbName } : {}),
-            ...(dbUrl ? { dbUrl } : {})
+            ...dbName ? { dbName } : {},
+            ...dbUrl ? { dbUrl } : {}
         })
     });
-    collection = (path) => {
-        validateCollectionPath(path);
-        return new MTCollection({ ...this.config, path });
-    }
+
+    collection = (path) => new MTCollection({ ...this.config, path });
     batchWrite = (map, configx) => batchWrite({ ...this.config }, map, configx);
     auth = () => new MTAuth({ ...this.config });
     storage = () => new MTStorage({ ...this.config });
@@ -123,8 +123,8 @@ class RNMT {
     listenReachableServer = (callback) => listenReachableServer(callback, this.config.projectUrl);
 
     getSocket = (configOpts) => {
-        const { disableAuth, authHandshake } = configOpts || {},
-            { projectUrl, uglify, accessKey, serverE2E_PublicKey, wsPrefix } = this.config;
+        const { disableAuth, authHandshake } = configOpts || {};
+        const { projectUrl, uglify, accessKey, serverE2E_PublicKey, wsPrefix } = this.config;
 
         const restrictedRoute = [
             _listenCollection,
@@ -132,12 +132,14 @@ class RNMT {
             _startDisconnectWriteTask,
             _cancelDisconnectWriteTask,
             _listenUserVerification
-        ];
+        ].map(v => [v(), v(true)]).flat();
+
+        const makeSocketCallback = () =>
+            new Promise(resolve => {
+                socketReadyCallback = resolve;
+            });
 
         let socketReadyCallback,
-            makeSocketCallback = () => new Promise(resolve => {
-                socketReadyCallback = resolve;
-            }),
             socketReadyPromise = makeSocketCallback(),
             socketListenerList = [],
             socketListenerIte = 0;
@@ -148,14 +150,14 @@ class RNMT {
             clientPrivateKey;
 
         const listenerCallback = (callback) => function () {
-            const [args, ...restArgs] = [...arguments];
+            const [args, emitable] = [...arguments];
             let res;
 
             if (uglify) {
                 res = parse(deserializeE2E(args, serverE2E_PublicKey, clientPrivateKey));
             } else res = args;
 
-            callback?.(...res || [], ...typeof restArgs[0] === 'function' ? [function () {
+            callback?.(...res || [], ...typeof emitable === 'function' ? [function () {
                 const args = [...arguments];
                 let res;
 
@@ -163,9 +165,9 @@ class RNMT {
                     res = serializeE2E(stringify(args), undefined, serverE2E_PublicKey)[0];
                 } else res = args;
 
-                restArgs[0](res);
+                emitable(res);
             }] : []);
-        }
+        };
 
         const emit = ({ timeout, promise, emittion: emittionx }) => new Promise(async (resolve, reject) => {
             const [route, ...emittion] = emittionx;
@@ -178,30 +180,31 @@ class RNMT {
 
             let hasResolved, stime = Date.now();
 
-            const timer = isNaN(timeout) ? undefined : setTimeout(() => {
+            const timer = timeout ? setTimeout(() => {
                 hasResolved = true;
                 reject(new Error('emittion timeout'));
-            }, timeout);
+            }, timeout) : undefined;
 
             await socketReadyPromise;
             if (hasResolved) return;
             clearTimeout(timer);
 
             try {
-                const h = isNaN(timeout) ? socket : socket.timeout(timeout - (Date.now() - stime));
+                const thisSocket = timeout ? socket.timeout(Math.max(timeout - (Date.now() - stime), 0)) : socket;
 
-                const lastEmit = emittion.slice(-1)[0],
-                    mit = typeof lastEmit === 'function' ? emittion.slice(0, -1) : emittion;
+                const lastEmit = emittion.slice(-1)[0];
+                const hasEmitable = typeof lastEmit === 'function';
+                const mit = hasEmitable ? emittion.slice(0, -1) : emittion;
 
                 const [reqBuilder, [privateKey]] = uglify ? serializeE2E(stringify(mit), undefined, serverE2E_PublicKey) : [undefined, []];
 
-                if (typeof lastEmit === 'function' && promise)
-                    throw 'emitWithAck cannot have function in it parameter';
+                if (hasEmitable && promise)
+                    throw 'emitWithAck cannot have function in it argument';
 
-                const p = await h[promise ? 'emitWithAck' : 'emit'](route,
-                    ...uglify ? [reqBuilder] : [mit],
-                    ...typeof lastEmit === 'function' ? [function () {
-                        const args = [...arguments][0];
+                const result = await thisSocket[promise ? 'emitWithAck' : 'emit'](route,
+                    uglify ? reqBuilder : mit,
+                    ...hasEmitable ? [function () {
+                        const [args] = [...arguments];
                         let res;
 
                         if (uglify) {
@@ -212,7 +215,7 @@ class RNMT {
                     }] : []
                 );
 
-                resolve((promise && p) ? uglify ? parse(deserializeE2E(p, serverE2E_PublicKey, privateKey))[0] : p[0] : undefined);
+                resolve((promise && result) ? uglify ? parse(deserializeE2E(result, serverE2E_PublicKey, privateKey))[0] : result[0] : undefined);
             } catch (e) {
                 reject(e);
             }
@@ -224,6 +227,7 @@ class RNMT {
             const [reqBuilder, [privateKey]] = uglify ? serializeE2E({ accessKey, a_extras: authHandshake }, mtoken, serverE2E_PublicKey) : [null, []];
 
             socket = io(`${wsPrefix}://${projectUrl.split('://')[1]}`, {
+                transports: ['websocket', 'polling', 'flashsocket'],
                 auth: uglify ? {
                     ugly: true,
                     e2e: reqBuilder
@@ -261,15 +265,20 @@ class RNMT {
         }
 
         return {
-            timeout: (timeout) => ({
-                emitWithAck: function () {
-                    return emit({
-                        timeout,
-                        promise: true,
-                        emittion: [...arguments]
-                    });
-                }
-            }),
+            timeout: (timeout) => {
+                if (timeout !== undefined && !Validator.POSITIVE_INTEGER(timeout))
+                    throw `expected a positive integer for timeout but got ${timeout}`;
+
+                return {
+                    emitWithAck: function () {
+                        return emit({
+                            timeout,
+                            promise: true,
+                            emittion: [...arguments]
+                        });
+                    }
+                };
+            },
             emit: function () { emit({ emittion: [...arguments] }) },
             emitWithAck: function () {
                 return emit({
@@ -313,11 +322,7 @@ class RNMT {
             }
         }
     }
-
-    wipeDatabaseCache = () => {
-
-    }
-}
+};
 
 const validateReleaseCacheProp = (prop) => {
     const cacheList = [...Object.values(CACHE_PROTOCOL)];
@@ -335,6 +340,11 @@ const validateReleaseCacheProp = (prop) => {
                         throw `Invalid value supplied to "io.${k}", expected a function but got "${v}"`;
                 } else throw `Unexpected property named "io.${k}"`;
             });
+        } else if (k === 'promoteCache') {
+            if (typeof v !== 'boolean') throw 'promoteCache should be a boolean';
+        } else if (k === 'heapMemory') {
+            if (typeof v !== 'number' || v <= 0)
+                throw `Invalid value supplied to heapMemory, value must be an integer greater than zero`;
         } else throw `Unexpected property named ${k}`;
     });
 
@@ -344,19 +354,15 @@ const validateReleaseCacheProp = (prop) => {
 const validator = {
     dbName: (v) => {
         if (typeof v !== 'string' || !v.trim())
-            throw `Invalid value supplied to dbName, value must be string and greater than one`;
+            throw `Invalid value supplied to dbName, value must be a non-empty string`;
     },
     dbUrl: (v) => {
         if (typeof v !== 'string' || !v.trim())
-            throw `Invalid value supplied to dbUrl, value must be string and greater than one`;
-    },
-    heapMemory: (v) => {
-        if (typeof v !== 'number' || v <= 0)
-            throw `Invalid value supplied to heapMemory, value must be number and greater than zero`;
+            throw `Invalid value supplied to dbUrl, value must be a non-empty string`;
     },
     projectUrl: (v) => {
-        if (typeof v !== 'string' || !Regexs.LINK().test(v.trim()))
-            throw `Invalid value supplied to projectUrl, value must be a string and greater than one`;
+        if (typeof v !== 'string' || (!Validator.HTTPS(v) && !Validator.HTTP(v)))
+            throw `Expected "projectUrl" to be valid https or http link but got "${v}"`;
     },
     disableCache: (v) => {
         if (typeof v !== 'boolean')
@@ -364,37 +370,43 @@ const validator = {
     },
     accessKey: (v) => {
         if (typeof v !== 'string' || !v.trim())
-            throw `Invalid value supplied to accessKey, value must be a string and greater than one`;
+            throw `Invalid value supplied to accessKey, value must be a non-empty string`;
     },
     maxRetries: (v) => {
-        if (typeof v !== 'number' || v <= 0 || !IS_WHOLE_NUMBER(v))
-            throw `Invalid value supplied to maxRetries, value must be whole number and greater than zero`;
+        if (v <= 0 || !Validator.POSITIVE_INTEGER(v))
+            throw `Invalid value supplied to maxRetries, value must be positive integer greater than zero`;
     },
     enableE2E_Encryption: (v) => {
         if (typeof v !== 'boolean')
             throw `Invalid value supplied to enableE2E_Encryption, value must be a boolean`;
     },
+    castBSON: v => {
+        if (typeof v !== 'boolean')
+            throw `Invalid value supplied to castBSON, value must be a boolean`;
+    },
+    borrowToken: v => {
+        if (typeof v !== 'string' || (!Validator.HTTPS(v) && !Validator.HTTP(v)))
+            throw `Expected "borrowToken" to be valid https or http link but got "${v}"`;
+    },
     serverE2E_PublicKey: (v) => {
         if (typeof v !== 'string' || !v.trim())
-            throw `Invalid value supplied to serverETE_PublicKey, value must be string and greater than one`;
+            throw `Invalid value supplied to serverETE_PublicKey, value must be a non-empty string`;
     }
 };
 
 const validateMTConfig = (config, that) => {
-    if (typeof config !== 'object') throw `${that.constructor.name} config is not an object`;
-    const h = Object.keys(config);
+    if (!Validator.OBJECT(config))
+        throw `${that.constructor.name} config is not an object`;
 
-    for (let i = 0; i < h.length; i++) {
-        const k = h[i];
-
+    for (const [k, v] of Object.entries(config)) {
         if (!validator[k]) throw `Unexpected property named ${k}`;
-        validator[k](config[k]);
+        validator[k](v);
     }
 
     if (config.enableE2E_Encryption && !config.serverE2E_PublicKey)
         throw '"serverE2E_PublicKey" is missing, enabling end-to-end encryption requires a public encryption key from the server';
-    if (!config['projectUrl']) throw `projectUrl is a required property in ${that.constructor.name}() constructor`;
-    if (!config['accessKey']) throw `accessKey is a required property in ${that.constructor.name}() constructor`;
+    if (!config.projectUrl) throw `projectUrl is a required property in ${that.constructor.name}() constructor`;
+    if (!config.accessKey) throw `accessKey is a required property in ${that.constructor.name}() constructor`;
 }
 
 export {

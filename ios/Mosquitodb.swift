@@ -100,6 +100,7 @@ class MosquitodbUploadTask: NSObject, URLSessionDataDelegate {
             if options["authToken"] != nil {
                 request.setValue(options["authToken"] as? String, forHTTPHeaderField: "Mosquito-Token")
             }
+            request.setValue(options["createHash"] as? String, forHTTPHeaderField: "hash-upload");
             request.setValue("buffer/upload", forHTTPHeaderField: "Content-Type")
             request.setValue(destination, forHTTPHeaderField: "Mosquito-Destination")
             

@@ -3,14 +3,25 @@ import { ServerReachableListener, StoreReadyListener } from "./listeners";
 import { CACHE_PROTOCOL, CACHE_STORAGE_PATH, DEFAULT_CACHE_PASSWORD, LOCAL_STORAGE_PATH } from "./values";
 import { CacheStore, Scoped } from "./variables";
 import { decryptString, encryptString, niceTry, serializeE2E } from "./peripherals";
+import { deserializeBSON, serializeToBase64 } from "../products/database/bson";
+import { trySendPendingWrite } from "../products/database";
 
-export const updateCacheStore = () => {
-    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE, io } = Scoped.ReleaseCacheData;
+export const updateCacheStore = (timer = 300) => {
+    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE, io, promoteCache } = Scoped.ReleaseCacheData;
 
     clearTimeout(Scoped.cacheStorageReducer);
     Scoped.cacheStorageReducer = setTimeout(() => {
+        const { AuthStore, DatabaseStore, PendingWrites, ...restStore } = CacheStore;
+
         const txt = encryptString(
-            JSON.stringify({ ...CacheStore }),
+            JSON.stringify({
+                AuthStore,
+                ...promoteCache ? {
+                    DatabaseStore: serializeToBase64(DatabaseStore),
+                    PendingWrites: serializeToBase64(PendingWrites)
+                } : {},
+                ...promoteCache ? restStore : {}
+            }),
             cachePassword,
             cachePassword
         );
@@ -19,12 +30,14 @@ export const updateCacheStore = () => {
             io.output(txt);
         } else if (cacheProtocol === CACHE_PROTOCOL.ASYNC_STORAGE) {
             AsyncStorage.setItem(CACHE_STORAGE_PATH, txt);
+        } else if (cacheProtocol === CACHE_PROTOCOL.SQLITE) {
+            console.error('unsupported protocol "sqlite"');
         } else {
             const fs = require('react-native-fs');
             fs.writeFile(LOCAL_STORAGE_PATH(), txt, 'utf8');
         }
-    }, 500);
-}
+    }, timer);
+};
 
 export const releaseCacheStore = async (builder) => {
     const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE, io } = builder;
@@ -41,17 +54,26 @@ export const releaseCacheStore = async (builder) => {
     }
 
     const j = JSON.parse(decryptString(txt || '', cachePassword, cachePassword) || '{}');
+    const projectList = new Set([]);
 
     Object.entries(j).forEach(([k, v]) => {
-        CacheStore[k] = v;
+        if (['DatabaseStore', 'PendingWrites'].includes(k)) {
+            CacheStore[k] = deserializeBSON(v);
+        } else CacheStore[k] = v;
+        projectList.add(k);
     });
     Object.entries(CacheStore.AuthStore).forEach(([key, value]) => {
         Scoped.AuthJWTToken[key] = value?.token;
     });
+    projectList.forEach(projectUrl => {
+        if (Scoped.IS_CONNECTED[projectUrl])
+            trySendPendingWrite(projectUrl);
+    });
     Scoped.IsStoreReady = true;
     StoreReadyListener.dispatch('_', 'ready');
-    // TODO: commit pending write
-}
+};
+
+export const getPrefferTime = () => Date.now() + (Scoped.serverTimeOffset || 0);
 
 export const awaitStore = () => new Promise(resolve => {
     if (Scoped.IsStoreReady) {
@@ -107,11 +129,3 @@ export const buildFetchInterface = ({ body, accessKey, authToken, method, uglify
         method: method || 'POST'
     }, keyPair];
 };
-
-export const simplifyError = (error, message) => ({
-    simpleError: { error, message }
-});
-
-export const validateRequestMethod = (method) => {
-    // TODO:
-}

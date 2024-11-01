@@ -1,10 +1,11 @@
 import { io } from "socket.io-client";
-import EngineApi from "../../helpers/EngineApi";
+import EngineApi from "../../helpers/engine_api";
 import { TokenRefreshListener } from "../../helpers/listeners";
-import { awaitReachableServer, awaitStore, buildFetchInterface, simplifyError, updateCacheStore } from "../../helpers/utils";
-import { CacheConstant, CacheStore, Scoped } from "../../helpers/variables";
+import { awaitReachableServer, awaitStore, buildFetchInterface, updateCacheStore } from "../../helpers/utils";
+import { CacheStore, Scoped } from "../../helpers/variables";
 import { awaitRefreshToken, initTokenRefresher, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
-import { deserializeE2E, encodeBinary, serializeE2E, simplifyCaughtError } from "../../helpers/peripherals";
+import { deserializeE2E, encodeBinary, serializeE2E } from "../../helpers/peripherals";
+import { simplifyCaughtError, simplifyError } from "simplify-error";
 
 const {
     _listenUserVerification,
@@ -26,25 +27,29 @@ export class MTAuth {
     googleSignin = (token) => doGoogleSignin(this.builder, token);
 
     appleSignin() {
-
+        throw 'unsupported method call';
     }
 
     facebookSignin() {
-
+        throw 'unsupported method call';
     }
 
     twitterSignin() {
-
+        throw 'unsupported method call';
     }
 
     githubSignin() {
-
+        throw 'unsupported method call';
     }
 
     listenVerifiedStatus(callback, onError) {
         const { projectUrl, serverE2E_PublicKey, uglify, baseUrl, wsPrefix } = this.builder;
 
-        let socket, wasDisconnected, lastToken = Scoped.AuthJWTToken[projectUrl] || null, lastInitRef = 0;
+        let socket,
+            wasDisconnected,
+            hasCancelled,
+            lastToken = Scoped.AuthJWTToken[projectUrl] || null,
+            lastInitRef = 0;
 
         const init = async () => {
             const processID = ++lastInitRef;
@@ -59,6 +64,7 @@ export class MTAuth {
                 [reqBuilder, [privateKey]] = uglify ? serializeE2E({ mtoken }, undefined, serverE2E_PublicKey) : [null, []];
 
             socket = io(`${wsPrefix}://${baseUrl}`, {
+                transports: ['websocket', 'polling', 'flashsocket'],
                 auth: uglify ? {
                     e2e: reqBuilder,
                     _m_internal: true
@@ -68,9 +74,8 @@ export class MTAuth {
             socket.emit(_listenUserVerification(uglify));
 
             socket.on("onVerificationChanged", ([err, verified]) => {
-                const fatal = err ? simplifyCaughtError(err).simpleError : undefined;
-                if (fatal) {
-                    onError?.(fatal);
+                if (err) {
+                    onError?.(simplifyCaughtError(err).simpleError);
                 } else {
                     callback?.(uglify ? deserializeE2E(verified, serverE2E_PublicKey, privateKey) : verified);
                 }
@@ -97,6 +102,8 @@ export class MTAuth {
         }, projectUrl);
 
         return () => {
+            if (hasCancelled) return;
+            hasCancelled = true;
             socket?.close?.();
             tokenListener?.();
         }
@@ -108,7 +115,7 @@ export class MTAuth {
         await awaitStore();
         return CacheStore.AuthStore[this.builder.projectUrl]?.refreshToken;
     }
-    
+
     parseToken = (token) => parseToken(token);
 
     getAuthToken = () => new Promise(resolve => {
@@ -126,19 +133,23 @@ export class MTAuth {
 
         return listenToken((t, initToken) => {
             const { refreshToken } = CacheStore.AuthStore[this.builder.projectUrl] || {};
+            const parseData = t && parseToken(t);
+            const tokenEntity = parseData?.entityOf || null;
 
             if (
-                (!!t || null) !== lastTrig ||
+                tokenEntity !== lastTrig ||
                 initToken
-            ) callback(t ? {
-                ...parseToken(t),
-                tokenManager: {
-                    refreshToken,
-                    accessToken: t
-                }
-            } : null);
+            ) {
+                callback(t ? {
+                    ...parseData,
+                    tokenManager: {
+                        refreshToken,
+                        accessToken: t
+                    }
+                } : null);
+            }
 
-            lastTrig = !!t || null;
+            lastTrig = tokenEntity;
         }, this.builder.projectUrl);
     }
 
@@ -152,7 +163,7 @@ export class MTAuth {
     signOut = () => doSignOut(this.builder);
 
     forceRefreshToken = () => initTokenRefresher(this.builder, true);
-}
+};
 
 const doCustomSignin = (builder, email, password) => new Promise(async (resolve, reject) => {
     const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
@@ -160,7 +171,7 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
     try {
         await awaitStore();
         const [reqBuilder, [privateKey]] = buildFetchInterface({
-            body: { _: `${encodeBinary(email)}.${encodeBinary(password)}` },
+            body: { data: `${encodeBinary(email)}.${encodeBinary(password)}` },
             accessKey,
             serverE2E_PublicKey,
             uglify
@@ -189,7 +200,7 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
         await awaitStore();
         const [reqBuilder, [privateKey]] = buildFetchInterface({
             body: {
-                _: `${encodeBinary(email)}.${encodeBinary(password)}.${(encodeBinary(name || '').trim())}`,
+                data: `${encodeBinary(email)}.${encodeBinary(password)}.${(encodeBinary((name || '').trim()))}`,
                 metadata,
             },
             accessKey,
@@ -213,24 +224,28 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
     }
 });
 
+const clearCacheForSignout = (projectUrl) => {
+    TokenRefreshListener.dispatch(projectUrl);
+    if (CacheStore.AuthStore[projectUrl]) delete CacheStore.AuthStore[projectUrl];
+    if (Scoped.AuthJWTToken[projectUrl]) delete Scoped.AuthJWTToken[projectUrl];
+    Object.keys(CacheStore).forEach(e => {
+        if (CacheStore[e][projectUrl]) delete CacheStore[e][projectUrl];
+    });
+    triggerAuthToken(projectUrl);
+    initTokenRefresher(builder);
+};
+
 export const doSignOut = async (builder) => {
     await awaitStore();
 
     const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder,
         { token, refreshToken: r_token } = CacheStore.AuthStore[projectUrl];
 
-    TokenRefreshListener.dispatch(projectUrl);
-    if (CacheStore.AuthStore[projectUrl]) delete CacheStore.AuthStore[projectUrl];
-    if (token) delete Scoped.AuthJWTToken[projectUrl];
-    Object.keys(CacheConstant).forEach(e => {
-        CacheStore[e] = CacheConstant[e];
-    });
-    triggerAuthToken(projectUrl);
+    clearCacheForSignout(projectUrl);
+    // TODO: sychronise signout
     updateCacheStore();
-    initTokenRefresher(builder);
 
     if (token) {
-        TokenRefreshListener.dispatch(projectUrl, 'ready');
         try {
             await awaitReachableServer(projectUrl);
 
@@ -247,7 +262,7 @@ export const doSignOut = async (builder) => {
             throw simplifyCaughtError(e).simpleError;
         }
     }
-}
+};
 
 const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) => {
     const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
@@ -279,11 +294,5 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
 });
 
 const doAppleSignin = async () => {
-
-}
-
-const validateEmailAndPassword = () => { }
-
-const getAuthState = async (projectUrl) => {
 
 }
