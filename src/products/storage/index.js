@@ -1,9 +1,10 @@
-import EngineApi from "../../helpers/EngineApi";
+import EngineApi from "../../helpers/engine_api";
 import { encodeBinary, prefixStoragePath } from "../../helpers/peripherals";
 import { Scoped } from "../../helpers/variables";
 import { DeviceEventEmitter, NativeEventEmitter, NativeModules, Platform } from 'react-native';
-import { awaitReachableServer, buildFetchInterface, simplifyError } from "../../helpers/utils";
+import { awaitReachableServer, buildFetchInterface } from "../../helpers/utils";
 import { awaitRefreshToken } from "../auth/accessor";
+import { simplifyError } from "simplify-error";
 
 const LINKING_ERROR =
     `The package 'react-native-mosquito-transport' doesn't seem to be linked. Make sure: \n\n` +
@@ -17,9 +18,9 @@ const RNMTModule = NativeModules.Mosquitodb || (
             throw new Error(LINKING_ERROR);
         },
     })
-),
-    emitter = Platform.OS === 'android' ?
-        DeviceEventEmitter : new NativeEventEmitter(RNMTModule);
+);
+const emitter = Platform.OS === 'android' ?
+    DeviceEventEmitter : new NativeEventEmitter(RNMTModule);
 
 export class MTStorage {
     constructor(config) {
@@ -31,8 +32,8 @@ export class MTStorage {
 
         const { projectUrl, accessKey, awaitStorage } = this.builder;
 
-        if (destination && (!destination?.trim() || typeof destination !== 'string')) {
-            onComplete?.({ error: 'destination_invalid', message: 'destination is invalid in downloadFile()' });
+        if (destination && (typeof destination !== 'string' || !destination.trim())) {
+            onComplete?.({ error: 'destination_invalid', message: 'destination must be a non-empty string' });
             return () => { };
         }
         if (destination) destination = prefixStoragePath(destination?.trim());
@@ -46,54 +47,54 @@ export class MTStorage {
         }
         link = link.trim();
 
+        const processID = `${++Scoped.StorageProcessID}`;
         const init = async () => {
             if (awaitStorage) await awaitReachableServer(projectUrl);
             await awaitRefreshToken(projectUrl);
 
             if (hasCancelled) return;
 
-            const processID = `${++Scoped.StorageProcessID}`,
-                progressListener = emitter.addListener('mt-download-progress', ({ processID: ref, receivedBtyes, expectedBytes }) => {
-                    if (processID !== ref || hasFinished || hasCancelled) return;
-                    onProgress?.({
-                        receivedBtyes,
-                        expectedBytes,
-                        isPaused: !!isPaused,
-                        pause: () => {
-                            if (hasFinished || isPaused || hasCancelled) return;
-                            RNMTModule.pauseDownload(processID);
-                            isPaused = true;
-                        },
-                        resume: () => {
-                            if (hasFinished || !isPaused || hasCancelled) return;
-                            RNMTModule.pauseDownload(processID);
-                            isPaused = false;
-                        }
-                    });
-                }),
-                resultListener = emitter.addListener('mt-download-status', ({ processID: ref, error, errorDes, result }) => {
-                    if (processID !== ref) return;
-                    if (result)
-                        try {
-                            result = JSON.parse(result);
-                        } catch (e) { }
-
-                    const path = result?.file || undefined;
-
-                    if (!hasFinished && !hasCancelled)
-                        onComplete?.(path ? undefined : (result?.simpleError || { error, errorDes }), path);
-                    resultListener.remove();
-                    progressListener.remove();
-                    hasFinished = true;
+            const progressListener = emitter.addListener('mt-download-progress', ({ processID: ref, receivedBtyes, expectedBytes }) => {
+                if (processID !== ref || hasFinished || hasCancelled) return;
+                onProgress?.({
+                    receivedBtyes,
+                    expectedBytes,
+                    isPaused: !!isPaused,
+                    pause: () => {
+                        if (hasFinished || isPaused || hasCancelled) return;
+                        RNMTModule.pauseDownload(processID);
+                        isPaused = true;
+                    },
+                    resume: () => {
+                        if (hasFinished || !isPaused || hasCancelled) return;
+                        RNMTModule.resumeDownload(processID);
+                        isPaused = false;
+                    }
                 });
+            });
+            const resultListener = emitter.addListener('mt-download-status', ({ processID: ref, error, errorDes, result }) => {
+                if (processID !== ref) return;
+                if (result)
+                    try {
+                        result = JSON.parse(result);
+                    } catch (e) { }
+
+                const path = result?.file || undefined;
+
+                if (!hasFinished && !hasCancelled)
+                    onComplete?.(path ? undefined : (result?.simpleError || { error, message: errorDes }), path);
+                resultListener.remove();
+                progressListener.remove();
+                hasFinished = true;
+            });
 
             RNMTModule.downloadFile({
                 url: link,
                 authToken: Scoped.AuthJWTToken[projectUrl],
-                ...(destination ? {
+                ...destination ? {
                     destination: destination.substring('file://'.length),
-                    destinationDir: `${destination.substring('file://'.length)}`.split('/').filter((_, i, a) => i !== a.length - 1).join('/')
-                } : {}),
+                    destinationDir: `${destination.substring('file://'.length)}`.split('/').slice(0, -1).join('/')
+                } : {},
                 processID,
                 urlName: link.split('/').pop(),
                 authorization: `Bearer ${encodeBinary(accessKey)}`
@@ -112,27 +113,28 @@ export class MTStorage {
         }
     }
 
-    uploadFile(file = '', destination = '', onComplete, onProgress) {
+    uploadFile(file = '', destination = '', onComplete, onProgress, createHash) {
         let hasFinished, hasCancelled;
 
-        if (!file?.trim() || typeof file !== 'string') {
+        if (typeof file !== 'string' || !file.trim()) {
             onComplete?.({ error: 'file_path_invalid', message: 'file must be a non-empty string in uploadFile()' });
             return () => { };
         }
-        destination = destination?.trim();
+        destination = destination?.trim?.();
 
-        const destErr = validateDestination(destination),
-            isAsset = (file.startsWith('ph://') || file.startsWith('content://'));
-
-        file = isAsset ? file.trim() : prefixStoragePath(file.trim());
-
-        if (destErr) {
-            onComplete?.({ error: 'destination_invalid', message: destErr });
+        try {
+            validateDestination(destination);
+        } catch (error) {
+            onComplete?.({ error: 'destination_invalid', message: error });
             return () => { };
         }
 
-        const { projectUrl, accessKey, awaitStorage } = this.builder,
-            processID = `${++Scoped.StorageProcessID}`;
+        const isAsset = (file.startsWith('ph://') || file.startsWith('content://'));
+
+        file = isAsset ? file.trim() : prefixStoragePath(file.trim());
+
+        const { projectUrl, accessKey, awaitStorage } = this.builder;
+        const processID = `${++Scoped.StorageProcessID}`;
 
         const init = async () => {
             if (awaitStorage) await awaitReachableServer(projectUrl);
@@ -142,27 +144,28 @@ export class MTStorage {
             const progressListener = emitter.addListener('mt-uploading-progress', ({ processID: ref, sentBtyes, totalBytes }) => {
                 if (processID !== ref || hasFinished || hasCancelled) return;
                 onProgress?.({ sentBtyes, totalBytes });
-            }),
-                resultListener = emitter.addListener('mt-uploading-status', ({ processID: ref, error, errorDes, result }) => {
-                    if (processID !== ref || hasFinished) return;
-                    if (result)
-                        try {
-                            result = JSON.parse(result);
-                        } catch (e) { }
+            });
+            const resultListener = emitter.addListener('mt-uploading-status', ({ processID: ref, error, errorDes, result }) => {
+                if (processID !== ref || hasFinished) return;
+                if (result)
+                    try {
+                        result = JSON.parse(result);
+                    } catch (e) { }
 
-                    const downloadUrl = result?.downloadUrl || undefined;
+                const downloadUrl = result?.downloadUrl || undefined;
 
-                    if (!hasFinished && !hasCancelled)
-                        onComplete?.(downloadUrl ? undefined : (result?.simpleError || { error, errorDes }), downloadUrl);
-                    resultListener.remove();
-                    progressListener.remove();
-                    hasFinished = true;
-                });
+                if (!hasFinished && !hasCancelled)
+                    onComplete?.(downloadUrl ? undefined : (result?.simpleError || { error, message: errorDes }), downloadUrl);
+                resultListener.remove();
+                progressListener.remove();
+                hasFinished = true;
+            });
 
             RNMTModule.uploadFile({
                 url: EngineApi._uploadFile(projectUrl),
                 file: isAsset ? file : file.substring('file://'.length),
                 authToken: Scoped.AuthJWTToken[projectUrl],
+                createHash: createHash ? 'yes' : 'no',
                 destination,
                 processID,
                 authorization: `Bearer ${encodeBinary(accessKey)}`
@@ -202,16 +205,18 @@ const deleteContent = async (builder, path, isFolder) => {
 }
 
 const validateDestination = (t = '') => {
-    t = t.trim();
+    if (typeof t !== 'string' || !t.trim()) throw 'path must be a non-empty string';
+    if (t.startsWith(' ') || t.endsWith(' ')) throw 'path must be trimmed';
+    if (t.startsWith('./') || t.startsWith('../')) throw 'path must be absolute';
+    if (t.endsWith('/')) throw 'path must not end with "/"';
+    if ('?'.split('').some(v => t.includes(v)))
+        throw `path must not contain ?`;
 
-    if (!t || typeof t !== 'string') return `destination is required`;
-    if (t.startsWith('/') || t.endsWith('/')) return 'destination must neither start with "/" nor end with "/"';
-    let l = '', r;
+    t = t.trim();
+    let l = '';
 
     t.split('').forEach(e => {
-        if (e === '/' && l === '/') r = 'invalid destination path, "/" cannot be side by side';
+        if (e === '/' && l === '/') throw 'invalid destination path, "/" cannot be duplicated side by side';
         l = e;
     });
-
-    return r;
 };

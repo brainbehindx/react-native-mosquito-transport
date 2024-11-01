@@ -4,3 +4,6 @@
 - change `Object` in d.ts to [key: string]: any
 - add `getServerTimeOffset` method
 - change null to undefined in `value`
+- `provide functionality to add extra header to MT instance (all outgoing request)`
+- borrowToken
+- `add sqlite`

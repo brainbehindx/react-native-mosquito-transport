@@ -3,123 +3,33 @@ import { ServerReachableListener } from "./listeners";
 import aes_pkg from 'crypto-js/aes.js';
 import Utf8Encoder from 'crypto-js/enc-utf8.js';
 import naclPkg from 'tweetnacl';
+import getLodash from "lodash.get";
 
 const { encrypt, decrypt } = aes_pkg;
 const { box, randomBytes } = naclPkg;
-
-export const simplifyError = (error, message) => ({
-    simpleError: { error, message }
-});
-
-export const simplifyCaughtError = (e) => e?.simpleError ? e : simplifyError('unexpected_error', `${e}`);
-
-export const everyEntrie = (obj, callback) => {
-    if (typeof obj !== 'object' || Array.isArray(obj)) return;
-    oEntries(obj).forEach(e => {
-        callback?.(e);
-    });
-}
-
-export const flatEntries = (obj) => oEntries(obj);
-
-export const flatRawEntries = () => oEntries(obj, false);
-
-export const oEntries = (obj, includeObj = true) => {
-    let o = [];
-
-    Object.entries(obj).forEach(e => {
-        o.push(e);
-        if (e[1] && typeof e[1] === 'object' && !Array.isArray(e[1])) {
-            o = [...o, ...oEntries(e[1])];
-        }
-    });
-
-    return o.filter(v => includeObj || typeof v[1] !== 'object' || Array.isArray(v[1]));
-}
-
-export const IS_RAW_OBJECT = (e) => e && typeof e === 'object' && !Array.isArray(e) && !(e instanceof Date);
-
-export const IS_WHOLE_NUMBER = (v) => typeof v === 'number' && !`${v}`.includes('.');
-
-export const IS_DECIMAL_NUMBER = (v) => typeof v === 'number' && `${v}`.includes('.');
-
-export const queryEntries = (obj, lastPath = '', exceptions = [], seperator = '.') => {
-    let o = [];
-    const isArraySeperator = Array.isArray(lastPath);
-
-    Object.entries(obj).forEach(([key, value]) => {
-        if (IS_RAW_OBJECT(value) && !exceptions.includes(key)) {
-            o = [
-                ...o,
-                ...queryEntries(
-                    value,
-                    isArraySeperator ? [...lastPath, key] : `${lastPath}${key}${seperator}`,
-                    exceptions,
-                    seperator
-                )
-            ];
-        } else o.push(isArraySeperator ? [[...lastPath, key], value] : [`${lastPath}${key}`, value]);
-    });
-
-    return o;
-}
-
-export const objToUniqueString = (obj) => {
-    const keys = [],
-        values = [];
-
-    if (Array.isArray(obj)) {
-        obj.forEach(e => {
-            if (IS_RAW_OBJECT(e)) {
-                queryEntries(e).map(([k, v]) => {
-                    keys.push(k);
-                    values.push(v);
-                });
-            } else keys.push(Array.isArray(e) ? JSON.stringify(e) : `${e}`);
-        });
-    } else if (!IS_RAW_OBJECT(obj))
-        return `${obj}`;
-    else
-        queryEntries(obj).map(([k, v]) => {
-            keys.push(k);
-            values.push(v);
-        });
-
-    return [
-        ...keys.sort(),
-        ...values.map(v => `${Array.isArray(v) ? JSON.stringify(v) : v}`).sort()
-    ].join(',');
-}
-
-export const cloneInstance = (v) => {
-    if (v && typeof v === 'object') {
-        return Array.isArray(v) ? [...v] : { ...v };
-    }
-    return v;
-}
 
 export const listenReachableServer = (callback, projectUrl) => {
     let lastValue;
     return ServerReachableListener.listenTo(projectUrl, t => {
         if (typeof t === 'boolean' && t !== lastValue) callback?.(t);
     }, true);
-}
+};
 
 export const prefixStoragePath = (path, prefix = 'file:///') => {
-    if (!path) return path;
+    let cleanedPath = path.replace(/^[^/]+:\/{1,3}/, '');
 
-    if (!path.startsWith('/') && !path.includes(':')) return prefix + path;
+    // Continuously remove any remaining protocol patterns until none are left
+    while (/^[^/]+:\/{1,3}/.test(cleanedPath)) {
+        cleanedPath = cleanedPath.replace(/^[^/]+:\/{1,3}/, '');
+    }
 
-    return prefix + path.split('/').filter((v, i) => i && v).join('/');
-}
+    // Remove any leading slashes after protocol removal
+    cleanedPath = cleanedPath.replace(/^\/+/, '');
 
-export const getUrlExtension = (url) => {
-    const r = url.split(/[#?]/)[0].split(".").pop().trim();
-    return r === url ? '' : r;
-}
+    return `${prefix}${cleanedPath}`;
+};
 
 export const niceTry = (promise) => new Promise(async resolve => {
-
     try {
         const r = await promise();
         resolve(r);
@@ -143,21 +53,50 @@ export const shuffleArray = (n) => {
 }
 
 export function sortArrayByObjectKey(arr = [], key) {
-    return arr.slice(0).sort(function (a, b) {
+    return arr.sort(function (a, b) {
         const left = getLodash(a, key),
             right = getLodash(b, key);
 
         return (left > right) ? 1 : (left < right) ? -1 : 0;
     });
-}
+};
+
+export async function niceHash(str) {
+    try {
+        // Convert the string to a Uint8Array
+        const encoder = new TextEncoder();
+        const data = encoder.encode(str);
+
+        // Use the Web Crypto API to compute the hash
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+
+        // Convert the ArrayBuffer to a hex string for readability
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
+
+        // Convert to base64
+        return Buffer.from(hashHex, 'hex').toString('base64');
+    } catch (_) {
+        return str;
+    }
+};
+
+export const sameInstance = (var1, var2) => {
+    try {
+        return var1.constructor === var2.constructor &&
+            Object.getPrototypeOf(var1) === Object.getPrototypeOf(var2)
+    } catch (_) {
+        return false;
+    }
+};
 
 export const encryptString = (txt, password, iv) => {
     return encrypt(txt, `${password || ''}${iv || ''}`).toString();
-}
+};
 
 export const decryptString = (txt, password, iv) => {
     return decrypt(txt, `${password || ''}${iv || ''}`).toString(Utf8Encoder);
-}
+};
 
 export const serializeE2E = (data, auth_token, serverPublicKey) => {
     const pair = box.keyPair(),
@@ -179,7 +118,7 @@ export const serializeE2E = (data, auth_token, serverPublicKey) => {
         ).toString('base64')}`,
         [pair.secretKey, pair.publicKey]
     ];
-}
+};
 
 export const deserializeE2E = (data, serverPublicKey, clientPrivateKey) => {
     const [binaryNonce, binaryData] = data.split('.'),
@@ -192,7 +131,7 @@ export const deserializeE2E = (data, serverPublicKey, clientPrivateKey) => {
 
     if (!baseArray) throw 'Decrypting e2e message failed';
     return JSON.parse(Buffer.from(baseArray).toString('utf8'))[0];
-}
+};
 
 export const encodeBinary = (s) => Buffer.from(s, 'utf8').toString('base64');
 export const decodeBinary = (s) => Buffer.from(s, 'base64').toString('utf8');

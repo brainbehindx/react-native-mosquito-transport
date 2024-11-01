@@ -1,4 +1,6 @@
+
 export const Scoped = {
+    serverTimeOffset: undefined,
     PendingIte: 0,
     AnyProcessIte: 0,
     IS_CONNECTED: {},
@@ -19,16 +21,20 @@ export const Scoped = {
     PendingDbReadCollective: {
         pendingProcess: {},
         pendingResolution: {}
-    }
-}
+    },
+    ActiveDatabaseListeners: {},
+    OutgoingWrites: {},
+    /**
+     * @type {Promise<any> | undefined}
+     */
+    dispatchingWritesPromise: undefined
+};
 
 export const CacheStore = {
     DatabaseStore: {},
-    DatabaseRecords: {},
     DatabaseCountResult: {},
+    DatabaseStats: {},
     AuthStore: {},
     PendingWrites: {},
     FetchedStore: {}
-}
-
-export const CacheConstant = { ...CacheStore };
+};

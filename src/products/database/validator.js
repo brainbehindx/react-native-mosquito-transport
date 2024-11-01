@@ -1,289 +1,530 @@
-import { IS_DECIMAL_NUMBER, IS_RAW_OBJECT, IS_WHOLE_NUMBER, queryEntries } from "../../helpers/peripherals";
-import { READ_OPS, READ_OPS_LIST, RETRIEVAL } from "../../helpers/values";
+import { guardArray, GuardError, guardObject, GuardSignal, niceGuard, Validator } from "guard-object";
+import { sameInstance } from "../../helpers/peripherals";
+import { RETRIEVAL } from "../../helpers/values";
 import getLodash from 'lodash.get';
-import isEqual from 'lodash.isequal';
+import { Binary, BSONRegExp, BSONSymbol, Code, DBRef, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp, UUID } from 'bson';
+import { bboxPolygon, booleanIntersects, booleanWithin, circle, distance, polygon } from "@turf/turf";
 
-const dirn = ['desc', 'asc', 'ascending', 'descending'];
+const DirectionList = [1, -1, 'asc', 'desc', 'ascending', 'descending'];
+const FilterFootPrint = t => validateFilter(t);
+const ReturnAndExcludeFootprint = t => t === undefined ||
+    !(Array.isArray(t) ? t : [t]).filter(v => !Validator.TRIMMED_NON_EMPTY_STRING(v)).length;
 
-export const validateReadConfig = (config, excludedNodes = []) => {
-    const nodeList = [
-        'excludeFields',
-        'returnOnly',
-        'extraction',
-        'episode',
-        'retrieval',
-        'disableAuth',
-        'disableMinimizer'
-    ].filter(v => !excludedNodes.includes(v));
+const FindConfig = {
+    extraction: t => t === undefined ||
+        (Array.isArray(t) ? t : [t]).filter(m =>
+            guardObject({
+                collection: isValidCollectionName,
+                sort: (t, p) => t === undefined || (Validator.TRIMMED_NON_EMPTY_STRING(t) && p.find),
+                direction: (t, p) => t === undefined || (p.sort && p.find && DirectionList.includes(t)),
+                limit: (t, p) => t === undefined || (Validator.POSITIVE_INTEGER(t) && p.find),
+                find: (t, p) => (t === undefined && p.findOne) || (!p.findOne && FilterFootPrint(t)),
+                findOne: (t, p) => (t === undefined && p.find) || (!p.find && FilterFootPrint(t)),
+                returnOnly: ReturnAndExcludeFootprint,
+                excludeFields: ReturnAndExcludeFootprint
+            }).validate(m)
+        ).length,
+    returnOnly: ReturnAndExcludeFootprint,
+    excludeFields: ReturnAndExcludeFootprint,
 
-    if (config) {
-        if (!IS_RAW_OBJECT(config)) throw `Invalid value assigned to 'config', expected a raw object`;
-        Object.entries(config).forEach(([k, v]) => {
-            if (!nodeList.includes(k)) throw `unexpected property '${k}' found in config`;
+    episode: t => [undefined, 0, 1].includes(t),
+    retrieval: t => t === undefined || Object.values(RETRIEVAL).includes(t),
+    disableAuth: t => t === undefined || typeof t === 'boolean',
+    disableMinimizer: t => t === undefined || typeof t === 'boolean'
+};
 
-            if (k === 'excludeFields' || k === 'returnOnly') {
-                if (typeof v !== 'string' && !Array.isArray(v))
-                    throw `invalid value supplied to ${k}, expected either a string or array of string`;
-                if (Array.isArray(v)) {
-                    v.forEach(e => {
-                        if (typeof e !== 'string')
-                            throw `invalid value supplied to ${k}, expected a string in array but got ${e}`;
-                    });
-                }
-            } else if (k === 'extraction') {
-                ((Array.isArray(v) ? v : [v]).forEach((e, i) => {
-                    const { limit, sort, direction, collection, find, findOne } = e;
-                    if (typeof limit === 'number' && (!IS_WHOLE_NUMBER(limit) || limit <= 0))
-                        throw `invalid value supplied to limit of extraction[${i}], expected a positive whole number but got ${limit}`;
+export const validateFindConfig = (config) => config === undefined ||
+    guardObject(FindConfig).validate(config);
 
-                    if (sort && typeof sort !== 'string')
-                        throw `invalid value supplied to sort in extraction[${i}], expected a string value but got ${sort}`;
+export const validateListenFindConfig = (config) => config === undefined ||
+    guardObject({
+        extraction: FindConfig.extraction,
+        returnOnly: FindConfig.returnOnly,
+        excludeFields: FindConfig.excludeFields,
+        disableAuth: FindConfig.disableAuth
+    }).validate(config);
 
-                    if (collection && typeof collection !== 'string')
-                        throw `invalid value supplied to collection in extraction[${i}], expected a string value but got ${collection}`;
+export const validateFindObject = command =>
+    guardObject({
+        // path: GuardSignal.TRIMMED_NON_EMPTY_STRING,
+        find: (t, p) => (t === undefined && p.findOne) || (!p.findOne && FilterFootPrint(t)),
+        findOne: (t, p) => (t === undefined && p.find) || (!p.find && FilterFootPrint(t)),
+        sort: t => t === undefined || Validator.TRIMMED_NON_EMPTY_STRING(t),
+        direction: (t, p) => t === undefined || (p.sort && DirectionList.includes(t)),
+        limit: t => t === undefined || Validator.POSITIVE_INTEGER(t),
+        random: (t, p) => t === undefined || (!p.sort && t === true),
+    }).validate({ ...command });
 
-                    if (direction && direction !== 1 && direction !== -1 && !dirn.includes(direction))
-                        throw `invalid value supplied to direction in extraction[${i}], expected any of ${[1, -1, ...dirn]} but got ${direction}`;
-                }));
-            } else if (k === 'episode') {
-                if (v !== 0 && v !== 1) throw `invalid value supplied to ${k}, expected either 0 or 1 but got ${v}`;
-            } else if (k === 'retrieval') {
-                const h = Object.values(RETRIEVAL);
-                if (!h.includes(v))
-                    throw `invalid value supplied to ${k}, expected any of ${h} but got ${v}`;
-            } else if (k === 'disableAuth' || k === 'disableMinimizer') {
-                if (typeof v !== 'boolean')
-                    throw `invalid value supplied to ${k}, expected a boolean value but got ${v}`;
-            } else throw `unexpected property '${k}' found in config`;
-        });
-    }
+export const validateCollectionName = collectionName => {
+    // Check if the collection name is empty
+    if (!collectionName || typeof collectionName !== 'string')
+        throw `collection name must be a non-empty string but got ${collectionName}`;
+
+    // Collection name cannot start with 'system.' (reserved)
+    if (collectionName.startsWith('system.'))
+        throw `collection name cannot start with 'system.' but got ${collectionName}`;
+
+    // Collection name cannot contain the '$' character
+    if (collectionName.includes('$'))
+        throw `collection name cannot contain the '$' character but got ${collectionName}`;
 }
 
-export const validateWriteValue = (value, filter, type) => {
-    const isObject = IS_RAW_OBJECT(value);
-
-    if (type === 'setOne' || type === 'setMany') {
-        if (type === 'setOne' && !isObject) {
-            throw `expected raw object in ${type}() operation but got ${value}`;
-        } else if (type === 'setMany' && !Array.isArray(value))
-            throw `expected an array of document in ${type}() operation but got ${value}`;
-
-        const duplicateID = {};
-
-        (Array.isArray(value) ? value : [value]).forEach(e => {
-            if (!IS_RAW_OBJECT(e)) throw `expected raw object in ${type}() operation but got ${e}`;
-            if (duplicateID[e._id]) throw `duplicate document _id:${e._id} found in ${type}() operation`;
-            if (!e._id) throw `No _id found in ${type}() operation`;
-            duplicateID[e._id] = true;
-        });
-        return;
+function isValidDatabaseName(dbName) {
+    // Check if the database name is empty
+    if (!dbName || typeof dbName !== 'string') {
+        return false;
     }
 
-    if (type !== 'deleteOne' && type !== 'deleteMany')
-        if (!isObject) throw `expected raw object in ${type}() operation but got ${value}`;
+    // Database name must be less than 64 characters
+    if (Buffer.byteLength(dbName, 'utf8') >= 64) {
+        return false;
+    }
 
-    validateFilter(filter);
+    // Database name cannot contain invalid characters: / \ " . $ space
+    const invalidDbChars = /[\/\\."$ ]/;
+    if (invalidDbChars.test(dbName)) {
+        return false;
+    }
 
-    queryEntries(value, []).forEach(([segment]) => {
-        if (segment.filter(v => v === '_foreign_doc').length)
-            throw `"_foreign_doc" is a reserved word, don't use it as a field in a document`;
-
-        // TODO: validate rest
-    });
+    return true;
 }
 
-export const validateFilter = (filter = {}) => evaluateFilter({}, filter);
+function isValidCollectionName(collectionName) {
+    try {
+        validateCollectionName(collectionName);
+        return true;
+    } catch (_) {
+        return false;
+    }
+};
 
-export const validateCollectionPath = (path) => {
-    if (typeof path !== 'string' || path.includes('.') || !path.trim())
-        throw `invalid collection path "${path}", expected non-empty string and mustn't contain "."`;
-}
+export const validateFilter = (filter) => confirmFilterDoc({}, filter);
 
 export const confirmFilterDoc = (data, filter) => {
-    // [$and, $or]
-    const logics = [[], []];
+    if (!Validator.OBJECT(filter)) throw `expected an object as filter value but got ${filter}`;
+
+    const logicalList = ['$and', '$or', '$nor'];
+    const logics = [[], [], []]; // [$and, $or, $nor]
 
     Object.entries(filter).forEach(([key, value]) => {
-        if (key === '$and') {
-            if (!Array.isArray(value)) throw `$and must be an array`;
-            value.forEach(v => logics[0].push(evaluateFilter(data, v)));
-        } else if (key === '$or') {
-            if (!Array.isArray(value)) throw `$and must be an array`;
-            value.forEach(v => logics[1].push(evaluateFilter(data, v)));
-        } else logics[0].push(evaluateFilter(data, { [`${key}`]: value }));
+        if (logicalList.includes(key)) {
+            if (!Array.isArray(value)) throw `"${key}" must be an array`;
+            if (!value.length) throw `"${key}" must be a nonempty array`;
+            logics[logicalList.indexOf(key)].push(...value.map(v => evaluateFilter(data, v)));
+        } else logics[0].push(evaluateFilter(data, { [key]: value }));
     });
+    const [AND, OR, NOR] = logics;
 
-    return !logics[0].filter(v => !v).length && (!logics[1].length || !!logics[1].filter(v => v).length);
-}
+    return !AND.some(v => !v) &&
+        (!OR.length || OR.some(v => v)) &&
+        (!NOR.length || NOR.some(v => !v));
+};
 
-const dataTypesValue = [
-    'double',
-    'string',
-    'object',
-    'array',
-    'decimal',
-    // 'long',
-    'int',
-    'bool',
-    'date',
-    'null',
-    'number'
+const plumeDoc = doc => [doc, ...Array.isArray(doc) ? doc : []];
+
+export const defaultBSON = (value, instance) => {
+    try {
+        return instance.constructor(value);
+    } catch (_) {
+        return value;
+    }
+};
+
+export const downcastBSON = d => {
+    if (d instanceof BSONRegExp)
+        return new RegExp(d.pattern, d.options);
+    if (
+        [
+            Long,
+            Double,
+            Int32,
+            Decimal128
+        ].some(v => d instanceof v)
+    ) return d * 1;
+    return d;
+};
+
+const isBasicBSON = d =>
+    [
+        Code,
+        ObjectId,
+        Binary,
+        MaxKey,
+        MinKey,
+        UUID,
+        Timestamp,
+        BSONSymbol
+    ].some(v => d instanceof v);
+
+export const CompareBson = {
+    equal: (doc, q, explicit) => {
+        doc = downcastBSON(doc);
+        q = downcastBSON(q);
+
+        if (
+            isBasicBSON(q) ||
+            isBasicBSON(doc)
+        ) {
+            return sameInstance(doc, q) &&
+                JSON.stringify(doc) === JSON.stringify(q);
+        }
+
+        if (q instanceof RegExp) {
+            return sameInstance(doc, q) ?
+                (doc.source === q.source && doc.flags === q.flags) :
+                (explicit && typeof doc === 'string' && q.test(doc));
+        }
+        return JSON.stringify(doc) === JSON.stringify(q)
+    },
+    greater: (doc, q) => {
+        doc = downcastBSON(doc);
+        q = downcastBSON(q);
+
+        if (doc instanceof Timestamp || q instanceof Timestamp) {
+            return sameInstance(doc, q) && doc.greaterThan(q);
+        }
+
+        return typeof doc === typeof q && ![q, doc].some(v => Array.isArray(v) || Validator.OBJECT(v)) && doc > q;
+    },
+    lesser: (doc, q) => {
+        doc = downcastBSON(doc);
+        q = downcastBSON(q);
+
+        if (doc instanceof Timestamp || q instanceof Timestamp) {
+            return sameInstance(doc, q) && doc.lessThan(q);
+        }
+
+        return typeof doc === typeof q && ![q, doc].some(v => Array.isArray(v) || Validator.OBJECT(v)) && doc < q;
+    },
+};
+
+const BsonTypeMap = {
+    double: [1, d => d instanceof Double],
+    string: [2, d => typeof d === 'string'],
+    object: [3, d => Validator.OBJECT(d)],
+    array: [4, d => Array.isArray(d)],
+    binData: [5, d => d instanceof Binary],
+    objectId: [7, d => d instanceof ObjectId],
+    bool: [8, d => typeof d === 'boolean'],
+    date: [9, d => d instanceof Date],
+    null: [10, d => d === null],
+    regex: [11, d => d instanceof RegExp || d instanceof BSONRegExp],
+    dbPointer: [12, d => d instanceof DBRef],
+    javascript: [13, d => d instanceof Code],
+    symbol: [14, d => d instanceof BSONSymbol],
+    int: [16, d => d instanceof Int32],
+    timestamp: [17, d => d instanceof Timestamp],
+    long: [18, d => d instanceof Long],
+    decimal: [19, d => d instanceof Decimal128],
+    minKey: [-1, d => d instanceof MinKey],
+    maxKey: [127, d => d instanceof MaxKey],
+    number: [undefined, d => d instanceof Double ||
+        d instanceof Int32 ||
+        d instanceof Long ||
+        d instanceof Decimal128 ||
+        Validator.NUMBER(d)]
+};
+
+const COORDINATE_GUARD = [
+    GuardSignal.COORDINATE.LONGITUDE_INT,
+    GuardSignal.COORDINATE.LATITUDE_INT
 ];
 
-const { $IN, $NIN, $GT, $GTE, $LT, $LTE, $EQ, $EXISTS, $REGEX, $NE, $SIZE, $TEXT, $TYPE } = READ_OPS;
+const validateGeoNear = q =>
+    guardObject({
+        $geometry: {
+            type: 'Point',
+            coordinates: COORDINATE_GUARD
+        },
+        $minDistance: (t, p) => Validator.POSITIVE_NUMBER(t) && p.$maxDistance > t,
+        $maxDistance: (t, p) => Validator.POSITIVE_NUMBER(t) && p.$minDistance < t
+    }).validate(q);
 
-// TODO: fix exact field value doc, deep nesting and other query
+const FilterUtils = {
+    $eq: (doc, q) => plumeDoc(doc).some(v =>
+        CompareBson.equal(v, q)
+    ),
 
-const evaluateFilter = (data = {}, filter = {}) => {
-    if (!IS_RAW_OBJECT(data)) throw `data must be a raw object`;
-    if (!IS_RAW_OBJECT(filter)) throw `expected a raw object but got ${filter}`;
+    $ne: (doc, q) => !FilterUtils.$eq(doc, q),
 
-    const dataObj = { ...data },
-        logics = [];
+    $gt: (doc, q) => plumeDoc(doc).some(v =>
+        CompareBson.greater(v, q)
+    ),
 
-    queryEntries(filter, []).forEach(([segment, value]) => {
-        let commandSplit = segment.map((e, i) => e.startsWith('$') ? ({ $: e, i }) : null).filter(v => v);
+    $gte: (doc, q) => plumeDoc(doc).some(v =>
+        CompareBson.greater(v, q) || CompareBson.equal(v, q)
+    ),
 
-        if (commandSplit.length) {
-            const { $, i: dex } = commandSplit[0],
-                pathValue = dex ? getLodash(dataObj, segment.filter((_, i) => i < dex).join('.')) : null;
+    $lt: (doc, q) => plumeDoc(doc).some(v =>
+        CompareBson.lesser(v, q)
+    ),
 
-            if (!READ_OPS_LIST.includes($))
-                throw `"${$}" operation is currently not supported`;
+    $lte: (doc, q) => plumeDoc(doc).some(v =>
+        CompareBson.lesser(v, q) || CompareBson.equal(v, q)
+    ),
 
-            if ($ !== $TEXT && (dex !== segment.length - 1 || !dex))
-                throw `"${$} must be at the last position as an operator"`;
+    $in: (doc, q) => {
+        if (!Array.isArray(q)) throw '$in needs an array';
+        return plumeDoc(doc).some(v =>
+            q.some(k => CompareBson.equal(v, k, true))
+        );
+    },
 
-            if ($ === $IN) {
-                if (!Array.isArray(value)) throw `The value assigned to "${$}" operator must be an array`;
+    $nin: (doc, q) => !FilterUtils.$in(doc, q),
 
-                if (pathValue !== undefined) {
-                    logics.push(
-                        !!(Array.isArray(pathValue) ? pathValue : [pathValue])
-                            .filter(v => !!value.filter(t => checkTestEquality(t, v)).length).length
-                    );
-                } else logics.push(false);
-            } else if ($ === $NIN) {
-                if (!Array.isArray(value)) throw `The value assigned to "${$}" operator must be an array`;
+    $all: (doc, q) => {
+        if (!Array.isArray(q)) throw '$all needs an array';
+        return plumeDoc(doc).filter(v =>
+            q.some(k => CompareBson.equal(v, k, true))
+        ).length >= q.length;
+    },
 
-                if (pathValue !== undefined) {
-                    logics.push(
-                        !(Array.isArray(pathValue) ? pathValue : [pathValue])
-                            .filter(v => !!value.filter(t => checkTestEquality(t, v)).length).length
-                    );
-                } else logics.push(true);
-            } else if ($ === $GT) {
-                if (pathValue !== undefined) {
-                    logics.push(
-                        !!(Array.isArray(pathValue) ? pathValue : [pathValue])
-                            .filter(v => v > value).length
-                    );
-                } else logics.push(false);
-            } else if ($ === $GTE) {
-                if (pathValue !== undefined) {
-                    logics.push(
-                        !!(Array.isArray(pathValue) ? pathValue : [pathValue])
-                            .filter(v => v >= value).length
-                    );
-                } else logics.push(false);
-            } else if ($ === $LT) {
-                if (pathValue !== undefined) {
-                    logics.push(
-                        !!(Array.isArray(pathValue) ? pathValue : [pathValue])
-                            .filter(v => v < value).length
-                    );
-                } else logics.push(false);
-            } else if ($ === $LTE) {
-                if (pathValue !== undefined) {
-                    logics.push(
-                        !!(Array.isArray(pathValue) ? pathValue : [pathValue])
-                            .filter(v => v <= value).length
-                    );
-                } else logics.push(false);
-            } else if ($ === $TEXT) {
-                if (commandSplit.slice(-1)[0].$ === '$search') {
-                    const { $caseSensitive, $search, $field } = filter.$text;
+    $size: (doc, q) => {
+        if (!Validator.POSITIVE_INTEGER(q))
+            throw `Failed to parse $size. Expected a positive integer in: $size: ${q}`;
+        return Array.isArray(doc) && doc.length === q;
+    },
 
-                    if (typeof value !== 'string' || typeof $search !== 'string')
-                        throw `$search must have a string value`;
-                    if (!$field) throw '"$field" is required inside "$text" operator when "disableCache=false"';
-                    const fieldArr = Array.isArray($field) ? $field : [$field];
+    $type: (doc, q) => {
+        if (q === undefined) return false;
+        return plumeDoc(doc).some(docx => {
+            if (q in BsonTypeMap) {
+                return BsonTypeMap[q][1](docx);
+            }
+            const c = Object.entries(BsonTypeMap).find(([_, v]) => v[0] === q);
+            if (c) return c[1][1](docx);
+            if (typeof q === 'number') throw `Invalid numerical type code: ${q}`;
+            throw `Unknown type name alias: ${q}`;
+        });
+    },
 
-                    fieldArr.forEach(v => {
-                        if (typeof v !== 'string' || !v.trim())
-                            throw `invalid item inside "$field", expected a non-empty string but got "${v}"`;
-                    });
+    $regex: (doc, q) => {
+        doc = downcastBSON(doc);
+        q = downcastBSON(q);
 
-                    const searchTxt = fieldArr.map(v => getLodash(dataObj, v || '')).map(v =>
-                        `${typeof v === 'string' ? v :
-                            Array.isArray(v) ? v.map(v => typeof v === 'string' ? v : '').join(' ').trim() : ''}`.trim()
-                    ).join(' ').trim();
+        return plumeDoc(doc).some(docx => {
+            if (q instanceof RegExp) {
+                return typeof docx === 'string' ? q.test(docx) :
+                    (docx instanceof RegExp &&
+                        docx.source === q.source &&
+                        docx.flags === q.flags);
+            }
 
-                    logics.push(
-                        $caseSensitive ? searchTxt.includes(value.trim()) :
-                            searchTxt.toLowerCase().includes(value.toLowerCase().trim())
-                    );
+            if (typeof q === 'string') {
+                return typeof docx === 'string' &&
+                    !!docx.match(q);
+            }
+
+            throw '$regex has to be a string or a regex';
+        });
+    },
+
+    $exists: (doc, q) => {
+        return q ? doc !== undefined : doc === undefined;
+    },
+
+    $ne: (doc, q) => !FilterUtils.$eq(doc, q),
+
+    $text: (parent, q) => {
+        guardObject({
+            $search: GuardSignal.STRING,
+            $field: t => Validator.STRING(t) || (t.length && niceGuard(guardArray(GuardSignal.STRING), t)),
+            $caseSensitive: t => t === undefined || Validator.BOOLEAN(t)
+        }).validate(q);
+        let { $field, $search, $caseSensitive } = q;
+
+        $field = (Array.isArray($field) ? $field : [$field]).map(v => {
+            const f = getLodash({ ...parent }, v);
+            return typeof f === 'string' ? f : '';
+        }).join(' ');
+
+        if (!$caseSensitive) {
+            $field = $field.toLowerCase();
+            $search = $search.toLowerCase();
+        }
+
+        return $field.includes($search);
+    },
+
+    $geoIntersects: (doc, q) => {
+        if (
+            !niceGuard({
+                $geometry: {
+                    type: 'Point',
+                    coordinates: COORDINATE_GUARD
                 }
-            } else if ($ === $EQ) {
+            }, q) &&
+            !niceGuard({
+                $geometry: {
+                    type: 'LineString',
+                    coordinates: [COORDINATE_GUARD, COORDINATE_GUARD]
+                }
+            }, q) &&
+            !niceGuard({
+                $geometry: {
+                    type: 'Polygon',
+                    coordinates: guardArray(guardArray(COORDINATE_GUARD))
+                }
+            }, q) &&
+            !niceGuard({
+                $geometry: {
+                    type: 'MultiPoint',
+                    coordinates: guardArray(COORDINATE_GUARD)
+                }
+            }, q) &&
+            !niceGuard({
+                $geometry: {
+                    type: 'MultiLineString',
+                    coordinates: guardArray([COORDINATE_GUARD, COORDINATE_GUARD])
+                }
+            }, q) &&
+            !niceGuard({
+                $geometry: {
+                    type: 'MultiPolygon',
+                    coordinates: guardArray(guardArray(guardArray(COORDINATE_GUARD)))
+                }
+            }, q)
+        ) throw `unknown operator: ${q}`;
 
-            } else if ($ === $EXISTS) {
-
-            } else if ($ === $REGEX) {
-
-            } else if ($ === $NE) {
-
-            } else if ($ === $SIZE) {
-                if (!IS_WHOLE_NUMBER(value) || v < 0) throw '$size must be a positive whole number';
-                logics.push(Array.isArray(pathValue) && pathValue.length === value);
-            } else if ($ === $TYPE) {
-                if (!dataTypesValue.includes(value))
-                    throw `invalid value supplied to ${$}, mosquioto-transport only recognise "${dataTypesValue}" data types`;
-
-                const cock = (v) => {
-                    if (typeof v === 'number') {
-                        if (isNaN(v)) {
-                            return ((value === 'decimal' || value === 'double') && IS_DECIMAL_NUMBER(v)) || value === 'int' || value === 'number';
+        try {
+            return booleanIntersects(doc, q.$geometry);
+        } catch (_) {
+            return false;
+        }
+    },
+    $geoWithin: (doc, q) => {
+        const { $box, $geometry, $center, $centerSphere, $polygon } = { ...q };
+        try {
+            if ($geometry) {
+                if (
+                    niceGuard({
+                        $geometry: {
+                            type: 'Polygon',
+                            coordinates: guardArray(guardArray(COORDINATE_GUARD))
                         }
-                    } else if (typeof v === 'boolean') {
-                        return value === 'bool';
-                    } else if (typeof v === 'string') {
-                        return value === 'string';
-                    } else if (v === null) {
-                        return value === 'null';
-                    } else if (v instanceof RegExp) {
-                        return value === 'regex';
-                    } else if (v instanceof Date) {
-                        return value === 'date';
-                    } else if (IS_RAW_OBJECT(v)) {
-                        return value === 'object';
-                    }
-                    return false;
+                    }, q) ||
+                    niceGuard({
+                        $geometry: {
+                            type: 'MultiPolygon',
+                            coordinates: guardArray(guardArray(guardArray(COORDINATE_GUARD)))
+                        }
+                    }, q)
+                ) {
+                    return booleanWithin(doc, $geometry);
                 }
+            } else if ($box) {
+                guardObject({ $box: Array(2).fill(COORDINATE_GUARD) }).validate(q);
 
+                const [bottomLeft, topRight] = $box;
+                const boundingBox = bboxPolygon([bottomLeft[0], bottomLeft[1], topRight[0], topRight[1]]);
+                return booleanWithin(doc, boundingBox);
+            } else if ($center) {
+                guardObject({ $center: [COORDINATE_GUARD, GuardSignal.POSITIVE_NUMBER] }).validate(q);
+
+                const [center, radius] = $center;
+                return booleanWithin(doc, circle(center, radius, { units: 'kilometers' }));
+            } else if ($centerSphere) {
+                guardObject({ $centerSphere: [COORDINATE_GUARD, GuardSignal.POSITIVE_NUMBER] }).validate(q);
+
+                const [center, radius] = $centerSphere;
+                // Convert radians to km
+                return booleanWithin(doc, circle(center, radius * 6371, { units: 'kilometers' }));
+            } else if ($polygon) {
+                guardObject({ $polygon: guardArray(COORDINATE_GUARD) }).validate(q);
+                return booleanWithin(doc, polygon([$polygon]));
+            }
+        } catch (e) {
+            if (!(e instanceof GuardError)) return false;
+        }
+        throw `unknown operator: ${JSON.stringify(q)}`;
+    },
+    $near: (doc, q) => {
+        validateGeoNear(q);
+        try {
+            const { $geometry, $maxDistance, $minDistance } = q;
+            const distanceOffset = distance($geometry, doc);
+
+            if ($minDistance && distanceOffset < $minDistance) {
+                return false;
+            }
+
+            if ($maxDistance && distanceOffset > $maxDistance) {
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            return false;
+        }
+    },
+    $nearSphere: (doc, q) => {
+        validateGeoNear(q);
+        try {
+            const { $geometry, $maxDistance, $minDistance } = q.$nearSphere;
+            const distanceOffset = distance($geometry, doc, { units: 'degrees' });
+
+            if ($minDistance && distanceOffset < $minDistance) {
+                return false;
+            }
+
+            if ($maxDistance && distanceOffset > $maxDistance) {
+                return false;
+            }
+
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+};
+
+const evaluateFilter = (data, filter = {}, parentData, level = 0) => {
+    if (!Validator.OBJECT(filter)) throw `filter must be a raw object but got ${filter}`;
+    if (!level) parentData = data;
+
+    const logics = [];
+
+    Object.entries(filter).map(([key, value]) => {
+        if (key.startsWith('$') && (key !== '$text' || !Validator.OBJECT(value)) && !level)
+            throw `unknown top level operator: ${key}`;
+
+        let thisData;
+        try {
+            thisData = data && getLodash(data, key);
+        } catch (_) { }
+
+        if (key === '$text' && !level) {
+            logics.push(FilterUtils.$text(parentData, value));
+        } else if (Validator.OBJECT(value) && !level) {
+            const valueEntrie = Object.entries(value);
+
+            if (valueEntrie.some(([k]) => k.startsWith('$'))) {
+                valueEntrie.forEach(([query, queryValue]) => {
+                    if (query in FilterUtils) {
+                        if (query === '$text' && level) throw '$text must be a top level operator';
+                        logics.push(FilterUtils[query](thisData, queryValue));
+                    } else if (query === '$not') {
+                        if (Validator.OBJECT(queryValue)) {
+                            logics.push(!evaluateFilter(thisData, queryValue, parentData, level + 1));
+                        } else logics.push(
+                            !plumeDoc(thisData).some(v => CompareBson.equal(v, queryValue, true))
+                        );
+                    } else throw `unknown operator: ${query}`;
+                });
+            } else if (valueEntrie.length) {
+                logics.push(evaluateFilter(thisData, value, parentData, level + 1));
+            } else {
                 logics.push(
-                    (Array.isArray(pathValue) && value === 'array') ||
-                    !!(Array.isArray(pathValue) ? pathValue : [pathValue])
-                        .filter(v => cock(v)).length
+                    Validator.OBJECT(thisData) &&
+                    !Object.keys(thisData).length
                 );
             }
         } else {
-            const pathValue = getLodash(dataObj, segment.join('.'));
-
-            if (pathValue !== undefined) {
-                logics.push(
-                    !!(Array.isArray(pathValue) ? pathValue : [pathValue])
-                        .filter(v => !!checkTestEquality(value, v)).length
-                );
-            } else logics.push(false);
+            logics.push(
+                plumeDoc(thisData).some(v => CompareBson.equal(v, value, true))
+            );
         }
     });
 
-    return !logics.filter(v => !v).length;
-}
-
-const checkTestEquality = (test, o) => {
-    if (test instanceof RegExp) {
-        if (typeof o === 'string') return test.test(o);
-        else return false;
-    } else return isEqual(test, o);
-}
+    return !logics.some(v => !v);
+};
