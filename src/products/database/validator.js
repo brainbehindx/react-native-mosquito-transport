@@ -6,9 +6,14 @@ import { Binary, BSONRegExp, BSONSymbol, Code, DBRef, Decimal128, Double, Int32,
 import { bboxPolygon, booleanIntersects, booleanWithin, circle, distance, polygon } from "@turf/turf";
 
 const DirectionList = [1, -1, 'asc', 'desc', 'ascending', 'descending'];
-const FilterFootPrint = t => validateFilter(t);
+const FilterFootPrint = t => {
+    validateFilter(t);
+    return true;
+};
 const ReturnAndExcludeFootprint = t => t === undefined ||
     !(Array.isArray(t) ? t : [t]).filter(v => !Validator.TRIMMED_NON_EMPTY_STRING(v)).length;
+
+const ConfigFind = t => t && FilterFootPrint(assignExtractionFind({}, t));
 
 const FindConfig = {
     extraction: t => t === undefined ||
@@ -18,8 +23,8 @@ const FindConfig = {
                 sort: (t, p) => t === undefined || (Validator.TRIMMED_NON_EMPTY_STRING(t) && p.find),
                 direction: (t, p) => t === undefined || (p.sort && p.find && DirectionList.includes(t)),
                 limit: (t, p) => t === undefined || (Validator.POSITIVE_INTEGER(t) && p.find),
-                find: (t, p) => (t === undefined && p.findOne) || (!p.findOne && FilterFootPrint(t)),
-                findOne: (t, p) => (t === undefined && p.find) || (!p.find && FilterFootPrint(t)),
+                find: (t, p) => (t === undefined && p.findOne) || (!p.findOne && ConfigFind(t)),
+                findOne: (t, p) => (t === undefined && p.find) || (!p.find && ConfigFind(t)),
                 returnOnly: ReturnAndExcludeFootprint,
                 excludeFields: ReturnAndExcludeFootprint
             }).validate(m)
@@ -41,7 +46,8 @@ export const validateListenFindConfig = (config) => config === undefined ||
         extraction: FindConfig.extraction,
         returnOnly: FindConfig.returnOnly,
         excludeFields: FindConfig.excludeFields,
-        disableAuth: FindConfig.disableAuth
+        disableAuth: FindConfig.disableAuth,
+        episode: t => [undefined, 0, 1].includes(t)
     }).validate(config);
 
 export const validateFindObject = command =>
@@ -54,6 +60,22 @@ export const validateFindObject = command =>
         limit: t => t === undefined || Validator.POSITIVE_INTEGER(t),
         random: (t, p) => t === undefined || (!p.sort && t === true),
     }).validate({ ...command });
+
+export const assignExtractionFind = (data, find) => {
+    if (!find) return find;
+
+    if (niceGuard({ $dynamicValue: GuardSignal.NON_EMPTY_STRING }, find)) {
+        return getLodash(data, find.$dynamicValue) || null;
+    } else if (Validator.OBJECT(find)) {
+        return Object.fromEntries(
+            Object.entries(find).map(([k, v]) =>
+                Validator.JSON(v) ? [k, assignExtractionFind(data, v)] : [k, v]
+            )
+        );
+    } else if (Array.isArray(find)) {
+        return find.map(v => assignExtractionFind(data, v));
+    } else return find;
+};
 
 export const validateCollectionName = collectionName => {
     // Check if the collection name is empty

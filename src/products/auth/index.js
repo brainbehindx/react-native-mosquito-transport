@@ -224,13 +224,14 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
     }
 });
 
-const clearCacheForSignout = (projectUrl) => {
-    TokenRefreshListener.dispatch(projectUrl);
+const clearCacheForSignout = (builder) => {
+    const { projectUrl } = builder;
     if (CacheStore.AuthStore[projectUrl]) delete CacheStore.AuthStore[projectUrl];
     if (Scoped.AuthJWTToken[projectUrl]) delete Scoped.AuthJWTToken[projectUrl];
     Object.keys(CacheStore).forEach(e => {
         if (CacheStore[e][projectUrl]) delete CacheStore[e][projectUrl];
     });
+    TokenRefreshListener.dispatch(projectUrl);
     triggerAuthToken(projectUrl);
     initTokenRefresher(builder);
 };
@@ -241,9 +242,8 @@ export const doSignOut = async (builder) => {
     const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder,
         { token, refreshToken: r_token } = CacheStore.AuthStore[projectUrl];
 
-    clearCacheForSignout(projectUrl);
-    // TODO: sychronise signout
-    updateCacheStore();
+    clearCacheForSignout(builder);
+    updateCacheStore(0);
 
     if (token) {
         try {

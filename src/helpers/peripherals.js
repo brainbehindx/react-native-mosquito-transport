@@ -36,6 +36,10 @@ export const niceTry = (promise) => new Promise(async resolve => {
     } catch (e) { resolve(); }
 });
 
+export const normalizeRoute = (route = '') => route.split('').map((v, i, a) =>
+    ((!i && v === '/') || (i === a.length - 1 && v === '/') || (i && a[i - 1] === '/' && v === '/')) ? '' : v
+).join('');
+
 export const shuffleArray = (n) => {
     const array = [...n];
     let currentIndex = array.length, randomIndex;

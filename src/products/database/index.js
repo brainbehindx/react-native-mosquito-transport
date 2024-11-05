@@ -133,9 +133,9 @@ const listenDocument = (callback, onError, builder, config) => {
     const { projectUrl, wsPrefix, serverE2E_PublicKey, baseUrl, dbUrl, dbName, accessKey, path, disableCache, command, uglify, castBSON } = builder;
     const { find, findOne, sort, direction, limit } = command;
     const { disableAuth } = config || {};
-    const accessId = generateRecordID(builder, config);
     const shouldCache = !disableCache;
     const processId = `${++Scoped.AnyProcessIte}`;
+    let accessId;
 
     validateListenFindConfig(config);
     validateFilter(findOne || find);
@@ -159,9 +159,13 @@ const listenDocument = (callback, onError, builder, config) => {
     };
 
     if (shouldCache) {
-        cacheListener = listenQueryEntry(snapshot => {
-            if (!Scoped.IS_CONNECTED[projectUrl]) dispatchSnapshot(snapshot);
-        }, { accessId, builder, config, processId });
+        accessId = generateRecordID(builder, config).then(hash => {
+            if (hasCancelled) return hash;
+            cacheListener = listenQueryEntry(snapshot => {
+                if (!Scoped.IS_CONNECTED[projectUrl]) dispatchSnapshot(snapshot);
+            }, { accessId: hash, builder, config, processId });
+            return hash;
+        });
 
         awaitStore().then(() => {
             if (hasCancelled) return;
@@ -209,13 +213,15 @@ const listenDocument = (callback, onError, builder, config) => {
         socket.on('mSnapshot', async ([err, snapshot]) => {
             hasRespond = true;
             if (err) {
-                onError?.(simplifyCaughtError(err).simpleError);
+                if (typeof onError === 'function') {
+                    onError(simplifyCaughtError(err).simpleError);
+                } else console.error('unhandled listen for:', { path, find }, ' error:', err);
             } else {
                 if (uglify) snapshot = deserializeE2E(snapshot, serverE2E_PublicKey, privateKey);
                 snapshot = deserializeBSON(snapshot)._;
                 dispatchSnapshot(snapshot);
 
-                if (shouldCache) insertRecord(builder, config, accessId, snapshot);
+                if (shouldCache) insertRecord(builder, config, await accessId, snapshot);
             }
         });
 
@@ -283,7 +289,7 @@ const initOnDisconnectionTask = (builder, value, type) => {
         socket = io(`${wsPrefix}://${baseUrl}`, {
             transports: ['websocket', 'polling', 'flashsocket'],
             auth: uglify ? {
-                e2e: serializeE2E(authObj, mtoken, serverE2E_PublicKey)[0],
+                e2e: serializeE2E({ accessKey, _body: authObj }, mtoken, serverE2E_PublicKey)[0],
                 _m_internal: true
             } : {
                 ...mtoken ? { mtoken } : {},
@@ -332,7 +338,7 @@ const countCollection = async (builder, config) => {
     const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, uglify, path, disableCache, command = {} } = builder;
     const { find } = command;
     const { disableAuth } = config || {};
-    const accessId = generateRecordID({ ...builder, countDoc: true }, config);
+    const accessId = await generateRecordID({ ...builder, countDoc: true }, config);
 
     await awaitStore();
     if (config !== undefined)
@@ -422,7 +428,7 @@ const findObject = async (builder, config) => {
     const { find, findOne, sort, direction, limit, random } = command;
     const { retrieval = RETRIEVAL.DEFAULT, episode = 0, disableAuth, disableMinimizer } = config || {};
     const enableMinimizer = !disableMinimizer;
-    const accessId = generateRecordID(builder, config);
+    const accessId = await generateRecordID(builder, config);
     const processAccessId = `${accessId}${projectUrl}${dbUrl}${dbName}${retrieval}`;
     const getRecordData = () => getRecord(builder, config, accessId);
     const shouldCache = (retrieval !== RETRIEVAL.DEFAULT || !disableCache) &&

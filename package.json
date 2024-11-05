@@ -3,6 +3,7 @@
   "version": "0.0.20",
   "description": "React native javascript sdk for mosquito-transport (https://github.com/deflexable/mosquito-transport)",
   "main": "src/index.js",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -30,14 +31,13 @@
     "bson": "^6.8.0",
     "buffer": "^6.0.3",
     "crypto-js": "^4.2.0",
-    "guard-object": "^1.1.0",
+    "guard-object": "^1.1.3",
     "json-buffer": "^3.0.1",
     "lodash.clonedeep": "^4.5.0",
     "lodash.get": "^4.4.2",
     "lodash.set": "^4.3.2",
     "lodash.unset": "^4.5.2",
     "react-native-get-random-values": "^1.9.0",
-    "set-large-timeout": "^1.0.1",
     "simplify-error": "^1.0.1",
     "socket.io-client": "^4.6.2",
     "subscription-listener": "^1.1.2",
