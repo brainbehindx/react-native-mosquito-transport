@@ -1,15 +1,14 @@
 import { niceHash, shuffleArray, sortArrayByObjectKey } from "../../helpers/peripherals";
 import { awaitStore, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
-import { CompareBson, confirmFilterDoc, defaultBSON, downcastBSON, validateCollectionName, validateFilter } from "./validator";
+import { assignExtractionFind, CompareBson, confirmFilterDoc, defaultBSON, downcastBSON, validateCollectionName, validateFilter } from "./validator";
 import getLodash from 'lodash.get';
 import setLodash from 'lodash.set';
 import unsetLodash from 'lodash.unset';
 import { DatabaseRecordsListener } from "../../helpers/listeners";
 import cloneDeep from "lodash.clonedeep";
-import { BSONRegExp, ObjectId, serialize, Timestamp } from "bson";
-import { Buffer } from "buffer";
-import { GuardSignal, niceGuard, Validator } from "guard-object";
+import { BSONRegExp, ObjectId, Timestamp } from "bson";
+import { niceGuard, Validator } from "guard-object";
 import { TIMESTAMP } from "../..";
 import { decrementDatabaseSize, incrementDatabaseSize } from "./counter";
 import { serializeToBase64 } from "./bson";
@@ -48,7 +47,7 @@ export const insertRecord = async (builder, config, accessId, value) => {
 
     await awaitStore();
     const { projectUrl, dbUrl, dbName, path, command } = builder;
-    const entityId = generateRecordID({}, config);
+    const entityId = await generateRecordID({}, config);
     const colData = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'data', entityId], { config, command, listing: [] });
     const trackedData = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'record', accessId]);
 
@@ -106,7 +105,7 @@ export const getRecord = async (builder, config, accessId) => {
     await awaitStore();
     const { projectUrl, dbUrl, dbName, path, command } = builder;
     const { find, findOne, sort, direction, limit, random } = command;
-    const entityId = generateRecordID({}, config);
+    const entityId = await generateRecordID({}, config);
     const colData = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'data', entityId]);
     const colRecord = getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'record', accessId]);
 
@@ -193,16 +192,18 @@ const recurseNonAtomicWrite = (obj, i, type) => {
             if (k === '_id') throw `avoid providing "_id" for ${type}() operation as _id only reference a single document`;
             if (k === '_foreign_doc') throw '"_foreign_doc" is readonly';
         }
-        if (k.includes('$') || k.includes('.'))
-            throw `invalid property "${k}", ${type}() operation fields must not contain .$`;
-        if (Validator.OBJECT(v)) recurseNonAtomicWrite(obj, i + 1, type);
+        if (k.includes('$') || k.includes('.')) {
+            if (!(k === '$timestamp' && v === 'now'))
+                throw `invalid property "${k}", ${type}() operation fields must not contain .$`;
+        }
+        if (Validator.OBJECT(v)) recurseNonAtomicWrite(v, i + 1, type);
     });
 };
 
 const recurseAtomicWrite = (obj, i, type) => {
     if (!Validator.OBJECT(obj)) throw `expected a document but got ${obj}`;
     Object.entries(obj).forEach(([k, v]) => {
-        if (!(k in AtomicWriter)) throw `Unknown update operator: ${k}`;
+        if (!i && !(k in AtomicWriter)) throw `Unknown update operator: ${k}`;
         if (i === 1) {
             if ((k === '_id' || k.startsWith('_id.')))
                 throw `avoid providing "_id" for ${type}() operation as _id only reference a single document`;
@@ -211,7 +212,7 @@ const recurseAtomicWrite = (obj, i, type) => {
                 throw '"_foreign_doc" is readonly';
         }
         if (k.includes('.$')) throw `unsupported operation at "${k}"`;
-        if (!i) recurseAtomicWrite(obj, i + 1, type);
+        if (!i || Validator.OBJECT(v)) recurseAtomicWrite(v, i + 1, type);
     });
 };
 
@@ -279,7 +280,7 @@ export const addPendingWrites = async (builder, writeId, result) => {
             result.value.map(({ scope, value, find, path }) =>
                 ({ type: scope, value, find, path })
             )
-            : { ...result, path: builder.path }
+            : [{ ...result, path: builder.path }]
     ).forEach(({ value: writeObj, find, type, path }) => {
         WriteValidator[type]({ find, value: writeObj });
         validateCollectionName(path);
@@ -580,22 +581,6 @@ const getFindFields = (find) => {
     });
 
     return result.filter((v, i, a) => a.findIndex(b => b === v) === i);
-};
-
-const assignExtractionFind = (data, find) => {
-    if (!find) return find;
-
-    if (niceGuard({ $dynamicValue: GuardSignal.NON_EMPTY_STRING }, find)) {
-        return getLodash(data, find.$dynamicValue) || null;
-    } else if (Validator.OBJECT(find)) {
-        return Object.fromEntries(
-            Object.entries(find).map(([k, v]) =>
-                Validator.JSON(v) ? [k, assignExtractionFind(data, v)] : [k, v]
-            )
-        );
-    } else if (Array.isArray(find)) {
-        return find.map(v => assignExtractionFind(data, v));
-    } else return find;
 };
 
 const deserializeWriteValue = (value) => {

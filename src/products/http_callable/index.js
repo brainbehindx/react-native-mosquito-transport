@@ -1,5 +1,5 @@
 import { Buffer } from "buffer";
-import { deserializeE2E, listenReachableServer, niceHash, serializeE2E } from "../../helpers/peripherals";
+import { deserializeE2E, listenReachableServer, niceHash, normalizeRoute, serializeE2E } from "../../helpers/peripherals";
 import { awaitStore, getReachableServer, updateCacheStore } from "../../helpers/utils";
 import { RETRIEVAL } from "../../helpers/values";
 import { CacheStore, Scoped } from "../../helpers/variables";
@@ -7,6 +7,7 @@ import { awaitRefreshToken } from "../auth/accessor";
 import { simplifyCaughtError } from "simplify-error";
 import { guardObject, Validator } from "guard-object";
 import cloneDeep from "lodash.clonedeep";
+import { stringify } from "json-buffer";
 
 const buildFetchData = (data) => {
     const { ok, type, status, statusText, redirected, url, headers, size, base64 } = data;
@@ -35,7 +36,7 @@ export const mfetch = async (input = '', init, config) => {
     const { projectUrl, serverE2E_PublicKey, method, maxRetries = 7, disableCache, accessKey, uglify } = config;
     const { headers, body } = init || {};
 
-    if (config !== undefined)
+    if (method !== undefined)
         guardObject({
             enableMinimizer: t => t === undefined || Validator.BOOLEAN(t),
             rawApproach: t => t === undefined || Validator.BOOLEAN(t),
@@ -61,13 +62,15 @@ export const mfetch = async (input = '', init, config) => {
     if (input.startsWith(projectUrl) && !rawApproach)
         throw `please set { rawApproach: true } if you're trying to access different endpoint at "${input}"`;
 
-    if (body !== undefined && typeof body !== 'string')
-        throw `"body" must be a string value`;
+    if (body !== undefined && (typeof body !== 'string' && !Buffer.isBuffer(body) && !Validator.JSON(body)))
+        throw `"body" must be any of string, buffer, object`;
 
-    const reqId = niceHash(
+    const rawBody = stringify([rawBody]);
+
+    const reqId = await niceHash(
         JSON.stringify([
             rawHeader,
-            body,
+            rawBody,
             !!disableAuth,
             input
         ])
@@ -134,16 +137,16 @@ export const mfetch = async (input = '', init, config) => {
             const uglified = !!(!isBaseUrl && body && uglify);
             const initType = rawHeader['content-type'];
 
-            const [reqBuilder, [privateKey]] = uglified ? serializeE2E(body, mtoken, serverE2E_PublicKey) : [null, []];
+            const [reqBuilder, [privateKey]] = uglified ? serializeE2E(rawBody, mtoken, serverE2E_PublicKey) : [null, []];
 
-            const f = await fetch(isBaseUrl ? input : `${projectUrl}/${input}`, {
+            const f = await fetch(isBaseUrl ? input : `${projectUrl}/${normalizeRoute(input)}`, {
                 ...isBaseUrl ? {} : { method: 'POST' },
                 ...init,
                 ...uglified ? { body: reqBuilder } : {},
                 cache: 'no-cache',
                 headers: {
-                    ...isBaseUrl ? {} : { 'Content-type': 'application/json' },
-                    ...headers,
+                    ...isBaseUrl ? {} : { 'content-type': 'application/json' },
+                    ...rawHeader,
                     ...uglified ? {
                         uglified,
                         'content-type': 'text/plain',

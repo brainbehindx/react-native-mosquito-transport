@@ -133,7 +133,7 @@ export class MTStorage {
 
         file = isAsset ? file.trim() : prefixStoragePath(file.trim());
 
-        const { projectUrl, accessKey, awaitStorage } = this.builder;
+        const { projectUrl, accessKey, awaitStorage, uglify } = this.builder;
         const processID = `${++Scoped.StorageProcessID}`;
 
         const init = async () => {
@@ -162,7 +162,7 @@ export class MTStorage {
             });
 
             RNMTModule.uploadFile({
-                url: EngineApi._uploadFile(projectUrl),
+                url: EngineApi._uploadFile(projectUrl, uglify),
                 file: isAsset ? file : file.substring('file://'.length),
                 authToken: Scoped.AuthJWTToken[projectUrl],
                 createHash: createHash ? 'yes' : 'no',
@@ -189,11 +189,11 @@ export class MTStorage {
 }
 
 const deleteContent = async (builder, path, isFolder) => {
-    const { projectUrl, accessKey } = builder;
+    const { projectUrl, accessKey, uglify } = builder;
 
     try {
         const r = await (await fetch(
-            EngineApi[isFolder ? '_deleteFolder' : '_deleteFile'](projectUrl),
+            EngineApi[isFolder ? '_deleteFolder' : '_deleteFile'](projectUrl, uglify),
             buildFetchInterface({ path }, accessKey, Scoped.AuthJWTToken[projectUrl], 'DELETE')
         )).json();
         if (r.simpleError) throw r;

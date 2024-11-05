@@ -14,6 +14,7 @@ import { AUTH_PROVIDER_ID, CACHE_PROTOCOL } from "./helpers/values";
 import EngineApi from './helpers/engine_api';
 import { parse, stringify } from 'json-buffer';
 import { Validator } from 'guard-object';
+import cloneDeep from 'lodash.clonedeep';
 
 const {
     _listenCollection,
@@ -22,6 +23,16 @@ const {
     _cancelDisconnectWriteTask,
     _listenUserVerification
 } = EngineApi;
+
+// https://socket.io/docs/v3/emit-cheatsheet/#reserved-events
+const reservedEventName = [
+    'connect',
+    'connect_error',
+    'disconnect',
+    'disconnecting',
+    'newListener',
+    'removeListener'
+];
 
 class RNMT {
     constructor(config) {
@@ -42,7 +53,7 @@ class RNMT {
             throw `releaseCache must be called before creating any ${this.constructor.name} instance`;
 
         if (!Scoped.InitializedProject[projectUrl]) {
-            Scoped.InitializedProject[projectUrl] = true;
+            Scoped.InitializedProject[projectUrl] = cloneDeep(this.config);
             Scoped.LastTokenRefreshRef[projectUrl] = 0;
             triggerAuthToken(projectUrl);
             initTokenRefresher({ ...this.config }, true);
@@ -149,7 +160,12 @@ class RNMT {
             tokenListener,
             clientPrivateKey;
 
-        const listenerCallback = (callback) => function () {
+        const listenerCallback = (route, callback) => function () {
+            if (reservedEventName.includes(route)) {
+                callback?.(...[...arguments]);
+                return;
+            }
+
             const [args, emitable] = [...arguments];
             let res;
 
@@ -290,7 +306,7 @@ class RNMT {
                 if (restrictedRoute.includes(route))
                     throw `${route} is a restricted socket path, avoid using any of ${restrictedRoute}`;
                 const ref = ++socketListenerIte,
-                    listener = listenerCallback(callback);
+                    listener = listenerCallback(route, callback);
 
                 socketListenerList.push([ref, 'on', route, listener]);
                 if (socket) socket.on(route, listener);
@@ -304,7 +320,7 @@ class RNMT {
                 if (restrictedRoute.includes(route))
                     throw `${route} is a restricted socket path, avoid using any of ${restrictedRoute}`;
                 const ref = ++socketListenerIte,
-                    listener = listenerCallback(callback);
+                    listener = listenerCallback(route, callback);
 
                 socketListenerList.push([ref, 'once', route, listener]);
                 if (socket) socket.once(route, listener);

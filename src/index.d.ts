@@ -381,7 +381,7 @@ interface RNMTAuth {
     getAuthToken: () => Promise<string>;
     getRefreshToken: () => Promise<string>;
     getRefreshTokenData: () => Promise<RefreshTokenData>;
-    parseToken: () => string;
+    parseToken: (token: string) => AuthData | RefreshTokenData;
     listenAuth: (callback: (auth: TokenEventData) => void) => () => void;
     getAuth: () => Promise<TokenEventData>;
     signOut: () => Promise<void>;
