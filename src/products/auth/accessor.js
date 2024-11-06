@@ -81,7 +81,7 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
     try {
         const { token, refreshToken: r_token } = CacheStore.AuthStore[projectUrl];
 
-        const [reqBuilder, [privateKey]] = buildFetchInterface({
+        const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { token, r_token },
             accessKey,
             uglify,
@@ -96,7 +96,7 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
         }
         if (r.simpleError) throw r;
 
-        const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
+        const f = uglify ? await deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
 
         if (CacheStore.AuthStore[projectUrl]) {
             CacheStore.AuthStore[projectUrl].token = f.result.token;

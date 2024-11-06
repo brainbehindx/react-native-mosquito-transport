@@ -61,7 +61,7 @@ export class MTAuth {
             }
             if (processID !== lastInitRef) return;
             const mtoken = Scoped.AuthJWTToken[projectUrl],
-                [reqBuilder, [privateKey]] = uglify ? serializeE2E({ mtoken }, undefined, serverE2E_PublicKey) : [null, []];
+                [reqBuilder, [privateKey]] = uglify ? await serializeE2E({ mtoken }, undefined, serverE2E_PublicKey) : [null, []];
 
             socket = io(`${wsPrefix}://${baseUrl}`, {
                 transports: ['websocket', 'polling', 'flashsocket'],
@@ -73,11 +73,11 @@ export class MTAuth {
 
             socket.emit(_listenUserVerification(uglify));
 
-            socket.on("onVerificationChanged", ([err, verified]) => {
+            socket.on("onVerificationChanged", async ([err, verified]) => {
                 if (err) {
                     onError?.(simplifyCaughtError(err).simpleError);
                 } else {
-                    callback?.(uglify ? deserializeE2E(verified, serverE2E_PublicKey, privateKey) : verified);
+                    callback?.(uglify ? await deserializeE2E(verified, serverE2E_PublicKey, privateKey) : verified);
                 }
             });
 
@@ -170,7 +170,7 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
 
     try {
         await awaitStore();
-        const [reqBuilder, [privateKey]] = buildFetchInterface({
+        const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { data: `${encodeBinary(email)}.${encodeBinary(password)}` },
             accessKey,
             serverE2E_PublicKey,
@@ -180,7 +180,7 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
         const f = await (await fetch(_customSignin(projectUrl, uglify), reqBuilder)).json();
         if (f.simpleError) throw f;
 
-        const r = uglify ? deserializeE2E(f.e2e, serverE2E_PublicKey, privateKey) : f;
+        const r = uglify ? await deserializeE2E(f.e2e, serverE2E_PublicKey, privateKey) : f;
 
         resolve({
             user: parseToken(r.result.token),
@@ -198,7 +198,7 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
 
     try {
         await awaitStore();
-        const [reqBuilder, [privateKey]] = buildFetchInterface({
+        const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: {
                 data: `${encodeBinary(email)}.${encodeBinary(password)}.${(encodeBinary((name || '').trim()))}`,
                 metadata,
@@ -211,7 +211,7 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
         const f = await (await fetch(_customSignup(projectUrl, uglify), reqBuilder)).json();
         if (f.simpleError) throw f;
 
-        const r = uglify ? deserializeE2E(f.e2e, serverE2E_PublicKey, privateKey) : f;
+        const r = uglify ? await deserializeE2E(f.e2e, serverE2E_PublicKey, privateKey) : f;
 
         resolve({
             user: parseToken(r.result.token),
@@ -226,7 +226,6 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
 
 const clearCacheForSignout = (builder) => {
     const { projectUrl } = builder;
-    if (CacheStore.AuthStore[projectUrl]) delete CacheStore.AuthStore[projectUrl];
     if (Scoped.AuthJWTToken[projectUrl]) delete Scoped.AuthJWTToken[projectUrl];
     Object.keys(CacheStore).forEach(e => {
         if (CacheStore[e][projectUrl]) delete CacheStore[e][projectUrl];
@@ -249,7 +248,7 @@ export const doSignOut = async (builder) => {
         try {
             await awaitReachableServer(projectUrl);
 
-            const [reqBuilder] = buildFetchInterface({
+            const [reqBuilder] = await buildFetchInterface({
                 body: { token, r_token },
                 accessKey,
                 uglify,
@@ -269,7 +268,7 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
 
     try {
         await awaitStore();
-        const [reqBuilder, [privateKey]] = buildFetchInterface({
+        const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { token },
             accessKey,
             uglify,
@@ -279,7 +278,7 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
         const r = await (await fetch(_googleSignin(projectUrl, uglify), reqBuilder)).json();
         if (r.simpleError) throw r;
 
-        const f = uglify ? deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
+        const f = uglify ? await deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
 
         resolve({
             user: parseToken(f.result.token),

@@ -194,7 +194,7 @@ const deleteContent = async (builder, path, isFolder) => {
     try {
         const r = await (await fetch(
             EngineApi[isFolder ? '_deleteFolder' : '_deleteFile'](projectUrl, uglify),
-            buildFetchInterface({ path }, accessKey, Scoped.AuthJWTToken[projectUrl], 'DELETE')
+            await buildFetchInterface({ path }, accessKey, Scoped.AuthJWTToken[projectUrl], 'DELETE')
         )).json();
         if (r.simpleError) throw r;
         if (r.status !== 'success') throw 'operation not successful';

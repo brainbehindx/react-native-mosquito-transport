@@ -1,3 +1,4 @@
+import './polyfill';
 import 'react-native-get-random-values';
 import { deserializeE2E, listenReachableServer, serializeE2E } from "./helpers/peripherals";
 import { awaitStore, releaseCacheStore } from "./helpers/utils";
@@ -15,6 +16,7 @@ import EngineApi from './helpers/engine_api';
 import { parse, stringify } from 'json-buffer';
 import { Validator } from 'guard-object';
 import cloneDeep from 'lodash.clonedeep';
+import { Buffer } from 'buffer';
 
 const {
     _listenCollection,
@@ -39,6 +41,7 @@ class RNMT {
         validateMTConfig(config, this);
         this.config = {
             ...config,
+            serverE2E_PublicKey: config.serverE2E_PublicKey && new Uint8Array(Buffer.from(config.serverE2E_PublicKey, 'base64')),
             castBSON: config.castBSON === undefined || config.castBSON,
             maxRetries: config.maxRetries || 3,
             uglify: config.enableE2E_Encryption
@@ -160,7 +163,7 @@ class RNMT {
             tokenListener,
             clientPrivateKey;
 
-        const listenerCallback = (route, callback) => function () {
+        const listenerCallback = (route, callback) => async function () {
             if (reservedEventName.includes(route)) {
                 callback?.(...[...arguments]);
                 return;
@@ -170,15 +173,15 @@ class RNMT {
             let res;
 
             if (uglify) {
-                res = parse(deserializeE2E(args, serverE2E_PublicKey, clientPrivateKey));
+                res = parse(await deserializeE2E(args, serverE2E_PublicKey, clientPrivateKey));
             } else res = args;
 
-            callback?.(...res || [], ...typeof emitable === 'function' ? [function () {
+            callback?.(...res || [], ...typeof emitable === 'function' ? [async function () {
                 const args = [...arguments];
                 let res;
 
                 if (uglify) {
-                    res = serializeE2E(stringify(args), undefined, serverE2E_PublicKey)[0];
+                    res = (await serializeE2E(stringify(args), undefined, serverE2E_PublicKey))[0];
                 } else res = args;
 
                 emitable(res);
@@ -212,26 +215,26 @@ class RNMT {
                 const hasEmitable = typeof lastEmit === 'function';
                 const mit = hasEmitable ? emittion.slice(0, -1) : emittion;
 
-                const [reqBuilder, [privateKey]] = uglify ? serializeE2E(stringify(mit), undefined, serverE2E_PublicKey) : [undefined, []];
+                const [reqBuilder, [privateKey]] = uglify ? await serializeE2E(stringify(mit), undefined, serverE2E_PublicKey) : [undefined, []];
 
                 if (hasEmitable && promise)
                     throw 'emitWithAck cannot have function in it argument';
 
                 const result = await thisSocket[promise ? 'emitWithAck' : 'emit'](route,
                     uglify ? reqBuilder : mit,
-                    ...hasEmitable ? [function () {
+                    ...hasEmitable ? [async function () {
                         const [args] = [...arguments];
                         let res;
 
                         if (uglify) {
-                            res = parse(deserializeE2E(args, serverE2E_PublicKey, privateKey));
+                            res = parse(await deserializeE2E(args, serverE2E_PublicKey, privateKey));
                         } else res = args;
 
                         lastEmit(...res || []);
                     }] : []
                 );
 
-                resolve((promise && result) ? uglify ? parse(deserializeE2E(result, serverE2E_PublicKey, privateKey))[0] : result[0] : undefined);
+                resolve((promise && result) ? uglify ? parse(await deserializeE2E(result, serverE2E_PublicKey, privateKey))[0] : result[0] : undefined);
             } catch (e) {
                 reject(e);
             }
@@ -240,7 +243,7 @@ class RNMT {
         const init = async () => {
             if (hasCancelled) return;
             const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
-            const [reqBuilder, [privateKey]] = uglify ? serializeE2E({ accessKey, a_extras: authHandshake }, mtoken, serverE2E_PublicKey) : [null, []];
+            const [reqBuilder, [privateKey]] = uglify ? await serializeE2E({ accessKey, a_extras: authHandshake }, mtoken, serverE2E_PublicKey) : [null, []];
 
             socket = io(`${wsPrefix}://${projectUrl.split('://')[1]}`, {
                 transports: ['websocket', 'polling', 'flashsocket'],

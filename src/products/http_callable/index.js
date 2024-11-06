@@ -49,6 +49,8 @@ export const mfetch = async (input = '', init, config) => {
     const disableAuth = method?.disableAuth || isBaseUrl;
     const shouldCache = (retrieval !== RETRIEVAL.DEFAULT || !disableCache) &&
         retrieval !== RETRIEVAL.NO_CACHE_NO_AWAIT;
+    const uglified = !!(!isBaseUrl && uglify);
+
     const rawHeader = Object.fromEntries(
         [...new Headers(headers).entries()]
     );
@@ -59,13 +61,18 @@ export const mfetch = async (input = '', init, config) => {
     if ('uglified' in rawHeader)
         throw '"uglified" in header is a reserved prop';
 
-    if (input.startsWith(projectUrl) && !rawApproach)
+    if (isBaseUrl && !rawApproach)
         throw `please set { rawApproach: true } if you're trying to access different endpoint at "${input}"`;
 
-    if (body !== undefined && (typeof body !== 'string' && !Buffer.isBuffer(body) && !Validator.JSON(body)))
-        throw `"body" must be any of string, buffer, object`;
+    if (body !== undefined) {
+        if (
+            typeof body !== 'string' &&
+            !Buffer.isBuffer(body) &&
+            !Validator.JSON(body)
+        ) throw `"body" must be any of string, buffer, object`;
+    }
 
-    const rawBody = stringify([rawBody]);
+    const rawBody = stringify([body]);
 
     const reqId = await niceHash(
         JSON.stringify([
@@ -134,10 +141,9 @@ export const mfetch = async (input = '', init, config) => {
                 await awaitRefreshToken(projectUrl);
 
             const mtoken = Scoped.AuthJWTToken[projectUrl];
-            const uglified = !!(!isBaseUrl && body && uglify);
             const initType = rawHeader['content-type'];
 
-            const [reqBuilder, [privateKey]] = uglified ? serializeE2E(rawBody, mtoken, serverE2E_PublicKey) : [null, []];
+            const [reqBuilder, [privateKey]] = uglified ? await serializeE2E(rawBody, mtoken, serverE2E_PublicKey) : [null, []];
 
             const f = await fetch(isBaseUrl ? input : `${projectUrl}/${normalizeRoute(input)}`, {
                 ...isBaseUrl ? {} : { method: 'POST' },
@@ -162,7 +168,7 @@ export const mfetch = async (input = '', init, config) => {
             if (!isBaseUrl && simple) throw { simpleError: JSON.parse(simple) };
 
             const base64 = uglified ?
-                Buffer.from(deserializeE2E(await f.text(), serverE2E_PublicKey, privateKey), 'base64') :
+                Buffer.from(await deserializeE2E(await f.text(), serverE2E_PublicKey, privateKey), 'base64') :
                 Buffer.from(await f.arrayBuffer()).toString('base64');
 
             const resObj = {
