@@ -2,7 +2,7 @@ import { io } from "socket.io-client";
 import EngineApi from "../../helpers/engine_api";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
 import { deserializeE2E, listenReachableServer, niceTry, serializeE2E } from "../../helpers/peripherals";
-import { awaitStore, buildFetchInterface, getReachableServer } from "../../helpers/utils";
+import { awaitStore, buildFetchInterface, buildFetchResult, getReachableServer } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { addPendingWrites, generateRecordID, getRecord, insertRecord, listenQueryEntry, removePendingWrite, validateWriteValue } from "./accessor";
 import { validateCollectionName, validateFilter, validateFindConfig, validateFindObject, validateListenFindConfig } from "./validator";
@@ -375,10 +375,9 @@ const countCollection = async (builder, config) => {
                 uglify
             });
 
-            const r = await (await fetch(_documentCount(projectUrl, uglify), reqBuilder)).json();
-            if (r.simpleError) throw r;
+            const data = await buildFetchResult(await fetch(_documentCount(projectUrl, uglify), reqBuilder), uglify);
 
-            const f = uglify ? await deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
+            const f = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
             if (!disableCache)
                 setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl, dbName, accessId], f.result);
@@ -515,10 +514,9 @@ const findObject = async (builder, config) => {
                 uglify
             });
 
-            const r = await (await fetch((findOne ? _readDocument : _queryCollection)(projectUrl, uglify), reqBuilder)).json();
-            if (r.simpleError) throw r;
+            const data = await buildFetchResult(await fetch((findOne ? _readDocument : _queryCollection)(projectUrl, uglify), reqBuilder), uglify);
 
-            const result = deserializeBSON((uglify ? await deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r).result)._;
+            const result = deserializeBSON((uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data).result)._;
 
             if (shouldCache) insertRecord(builder, config, accessId, result);
             finalize({ liveResult: result || null });
@@ -651,12 +649,11 @@ const commitData = async (builder, value, type, config) => {
                 uglify
             });
 
-            const r = await (await fetch((isBatchWrite ? _writeMapDocument : _writeDocument)(projectUrl, uglify), reqBuilder)).json();
-            if (r.simpleError) throw r;
+            const data = await buildFetchResult(await fetch((isBatchWrite ? _writeMapDocument : _writeDocument)(projectUrl, uglify), reqBuilder), uglify);
 
-            const f = uglify ? await deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
+            const f = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
-            finalize({ ...f }, undefined, { removeCache: true });
+            finalize({ ...f.statusData }, undefined, { removeCache: true });
         } catch (e) {
             if (e?.simpleError) {
                 console.error(`${type} error (${path}), ${e.simpleError?.message}`);

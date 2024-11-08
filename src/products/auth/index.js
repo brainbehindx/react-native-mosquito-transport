@@ -1,7 +1,7 @@
 import { io } from "socket.io-client";
 import EngineApi from "../../helpers/engine_api";
 import { TokenRefreshListener } from "../../helpers/listeners";
-import { awaitReachableServer, awaitStore, buildFetchInterface, updateCacheStore } from "../../helpers/utils";
+import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { awaitRefreshToken, initTokenRefresher, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
 import { deserializeE2E, encodeBinary, serializeE2E } from "../../helpers/peripherals";
@@ -177,10 +177,9 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
             uglify
         });
 
-        const f = await (await fetch(_customSignin(projectUrl, uglify), reqBuilder)).json();
-        if (f.simpleError) throw f;
+        const data = await buildFetchResult(await fetch(_customSignin(projectUrl, uglify), reqBuilder), uglify);
 
-        const r = uglify ? await deserializeE2E(f.e2e, serverE2E_PublicKey, privateKey) : f;
+        const r = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
         resolve({
             user: parseToken(r.result.token),
@@ -208,10 +207,9 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
             uglify
         });
 
-        const f = await (await fetch(_customSignup(projectUrl, uglify), reqBuilder)).json();
-        if (f.simpleError) throw f;
+        const data = await buildFetchResult(await fetch(_customSignup(projectUrl, uglify), reqBuilder), uglify);
 
-        const r = uglify ? await deserializeE2E(f.e2e, serverE2E_PublicKey, privateKey) : f;
+        const r = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
         resolve({
             user: parseToken(r.result.token),
@@ -275,10 +273,9 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
             serverE2E_PublicKey
         });
 
-        const r = await (await fetch(_googleSignin(projectUrl, uglify), reqBuilder)).json();
-        if (r.simpleError) throw r;
+        const data = await buildFetchResult(await fetch(_googleSignin(projectUrl, uglify), reqBuilder), uglify);
 
-        const f = uglify ? await deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
+        const f = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
         resolve({
             user: parseToken(f.result.token),
