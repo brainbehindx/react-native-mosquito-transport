@@ -5,6 +5,7 @@ import { CacheStore, Scoped } from "./variables";
 import { decryptString, encryptString, niceTry, serializeE2E } from "./peripherals";
 import { deserializeBSON, serializeToBase64 } from "../products/database/bson";
 import { trySendPendingWrite } from "../products/database";
+import { deserialize } from "entity-serializer";
 
 export const updateCacheStore = (timer = 300) => {
     const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE, io, promoteCache } = Scoped.ReleaseCacheData;
@@ -122,10 +123,21 @@ export const buildFetchInterface = async ({ body, accessKey, authToken, method, 
         body: uglify ? plate : body,
         cache: 'no-cache',
         headers: {
-            'Content-type': uglify ? 'text/plain' : 'application/json',
+            'Content-type': uglify ? 'request/buffer' : 'application/json',
             'Authorization': accessKey,
             ...((authToken && !uglify) ? { 'Mosquito-Token': authToken } : {})
         },
         method: method || 'POST'
     }, keyPair];
+};
+
+export const buildFetchResult = async (fetchRef, ugly) => {
+    if (ugly) {
+        const [data, simpleError] = deserialize(await fetchRef.arrayBuffer());
+        if (simpleError) throw simpleError;
+        return data;
+    }
+    const json = await fetchRef.json();
+    if (json.simpleError) throw json;
+    return json;
 };

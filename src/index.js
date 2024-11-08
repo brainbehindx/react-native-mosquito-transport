@@ -13,7 +13,6 @@ import { mfetch } from "./products/http_callable";
 import { io } from "socket.io-client";
 import { AUTH_PROVIDER_ID, CACHE_PROTOCOL } from "./helpers/values";
 import EngineApi from './helpers/engine_api';
-import { parse, stringify } from 'json-buffer';
 import { Validator } from 'guard-object';
 import cloneDeep from 'lodash.clonedeep';
 import { Buffer } from 'buffer';
@@ -173,7 +172,7 @@ class RNMT {
             let res;
 
             if (uglify) {
-                res = parse(await deserializeE2E(args, serverE2E_PublicKey, clientPrivateKey));
+                res = await deserializeE2E(args, serverE2E_PublicKey, clientPrivateKey);
             } else res = args;
 
             callback?.(...res || [], ...typeof emitable === 'function' ? [async function () {
@@ -181,7 +180,7 @@ class RNMT {
                 let res;
 
                 if (uglify) {
-                    res = (await serializeE2E(stringify(args), undefined, serverE2E_PublicKey))[0];
+                    res = (await serializeE2E(args, undefined, serverE2E_PublicKey))[0];
                 } else res = args;
 
                 emitable(res);
@@ -215,7 +214,7 @@ class RNMT {
                 const hasEmitable = typeof lastEmit === 'function';
                 const mit = hasEmitable ? emittion.slice(0, -1) : emittion;
 
-                const [reqBuilder, [privateKey]] = uglify ? await serializeE2E(stringify(mit), undefined, serverE2E_PublicKey) : [undefined, []];
+                const [reqBuilder, [privateKey]] = uglify ? await serializeE2E(mit, undefined, serverE2E_PublicKey) : [undefined, []];
 
                 if (hasEmitable && promise)
                     throw 'emitWithAck cannot have function in it argument';
@@ -227,14 +226,14 @@ class RNMT {
                         let res;
 
                         if (uglify) {
-                            res = parse(await deserializeE2E(args, serverE2E_PublicKey, privateKey));
+                            res = await deserializeE2E(args, serverE2E_PublicKey, privateKey);
                         } else res = args;
 
                         lastEmit(...res || []);
                     }] : []
                 );
 
-                resolve((promise && result) ? uglify ? parse(await deserializeE2E(result, serverE2E_PublicKey, privateKey))[0] : result[0] : undefined);
+                resolve((promise && result) ? uglify ? (await deserializeE2E(result, serverE2E_PublicKey, privateKey))[0] : result[0] : undefined);
             } catch (e) {
                 reject(e);
             }

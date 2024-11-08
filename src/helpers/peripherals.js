@@ -4,6 +4,7 @@ import aes_pkg from 'crypto-js/aes.js';
 import Utf8Encoder from 'crypto-js/enc-utf8.js';
 import naclPkg from 'tweetnacl';
 import getLodash from "lodash.get";
+import { deserialize, serialize } from "entity-serializer";
 
 const { encrypt, decrypt } = aes_pkg;
 const { box, randomBytes } = naclPkg;
@@ -104,28 +105,30 @@ export const decryptString = (txt, password, iv) => {
 
 export const serializeE2E = async (data, auth_token, serverPublicKey) => {
     const pair = box.keyPair(),
-        nonce = randomBytes(box.nonceLength),
-        pubBase64 = Buffer.from(pair.publicKey).toString('base64'),
-        nonceBase64 = Buffer.from(nonce).toString('base64');
+        nonce = randomBytes(box.nonceLength);
 
     return [
-        `${pubBase64}.${nonceBase64}.${Buffer.from(
-            box(
-                Buffer.from(JSON.stringify([
-                    data,
-                    auth_token
-                ]), 'utf8'),
-                nonce,
-                Buffer.from(serverPublicKey, 'base64'),
-                pair.secretKey
+        serialize([
+            pair.publicKey,
+            nonce,
+            Buffer.from(
+                box(
+                    serialize([
+                        data,
+                        auth_token
+                    ]),
+                    nonce,
+                    Buffer.from(serverPublicKey, 'base64'),
+                    pair.secretKey
+                )
             )
-        ).toString('base64')}`,
+        ]),
         [pair.secretKey, pair.publicKey]
     ];
 };
 
 export const deserializeE2E = async (data, serverPublicKey, clientPrivateKey) => {
-    const [binaryNonce, binaryData] = data.split('.'),
+    const [binaryNonce, binaryData] = deserialize(data),
         baseArray = box.open(
             Buffer.from(binaryData, 'base64'),
             Buffer.from(binaryNonce, 'base64'),
@@ -134,7 +137,7 @@ export const deserializeE2E = async (data, serverPublicKey, clientPrivateKey) =>
         );
 
     if (!baseArray) throw 'Decrypting e2e message failed';
-    return JSON.parse(Buffer.from(baseArray).toString('utf8'))[0];
+    return deserialize(baseArray);
 };
 
 export const encodeBinary = (s) => Buffer.from(s, 'utf8').toString('base64');
