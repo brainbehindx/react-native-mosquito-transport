@@ -130,7 +130,7 @@ const {
 } = EngineApi;
 
 const listenDocument = (callback, onError, builder, config) => {
-    const { projectUrl, wsPrefix, serverE2E_PublicKey, baseUrl, dbUrl, dbName, accessKey, path, disableCache, command, uglify, castBSON } = builder;
+    const { projectUrl, wsPrefix, serverE2E_PublicKey, baseUrl, dbUrl, dbName, accessKey, path, disableCache, command, uglify, extraHeaders, castBSON } = builder;
     const { find, findOne, sort, direction, limit } = command;
     const { disableAuth } = config || {};
     const shouldCache = !disableCache;
@@ -185,14 +185,14 @@ const listenDocument = (callback, onError, builder, config) => {
         const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
         const pureConfig = stripRequestConfig(config);
         const authObj = {
-            commands: {
+            commands: stripUndefined({
                 config: pureConfig && serializeToBase64(pureConfig),
                 path,
                 find: serializeToBase64(findOne || find),
                 sort,
                 direction,
                 limit
-            },
+            }),
             dbName,
             dbUrl
         };
@@ -201,7 +201,8 @@ const listenDocument = (callback, onError, builder, config) => {
 
         socket = io(`${wsPrefix}://${baseUrl}`, {
             transports: ['websocket', 'polling', 'flashsocket'],
-            auth: uglify ? { e2e: encPlate, _m_internal: true } : {
+            extraHeaders,
+            auth: uglify ? { e2e: encPlate.toString('base64'), _m_internal: true } : {
                 accessKey,
                 _body: authObj,
                 ...mtoken ? { mtoken } : {},
@@ -256,7 +257,7 @@ const listenDocument = (callback, onError, builder, config) => {
 };
 
 const initOnDisconnectionTask = (builder, value, type) => {
-    const { projectUrl, wsPrefix, baseUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, path, command, uglify } = builder;
+    const { projectUrl, wsPrefix, baseUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, path, extraHeaders, command, uglify } = builder;
     const { find } = command || {};
     const disableAuth = false;
 
@@ -276,20 +277,21 @@ const initOnDisconnectionTask = (builder, value, type) => {
 
         const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
         const authObj = {
-            commands: {
+            commands: stripUndefined({
                 path,
                 find: find && serializeToBase64(find),
                 value: value && serializeToBase64({ _: value }),
                 scope: type
-            },
+            }),
             dbName,
             dbUrl
         };
 
         socket = io(`${wsPrefix}://${baseUrl}`, {
             transports: ['websocket', 'polling', 'flashsocket'],
+            extraHeaders,
             auth: uglify ? {
-                e2e: (await serializeE2E({ accessKey, _body: authObj }, mtoken, serverE2E_PublicKey))[0],
+                e2e: (await serializeE2E({ accessKey, _body: authObj }, mtoken, serverE2E_PublicKey))[0].toString('base64'),
                 _m_internal: true
             } : {
                 ...mtoken ? { mtoken } : {},
@@ -335,7 +337,7 @@ const initOnDisconnectionTask = (builder, value, type) => {
 };
 
 const countCollection = async (builder, config) => {
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, uglify, path, disableCache, command = {} } = builder;
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, uglify, extraHeaders, path, disableCache, command = {} } = builder;
     const { find } = command;
     const { disableAuth } = config || {};
     const accessId = await generateRecordID({ ...builder, countDoc: true }, config);
@@ -355,8 +357,8 @@ const countCollection = async (builder, config) => {
 
         const finalize = (a, b) => {
             if (Validator.NUMBER(a)) {
-                reject(b);
-            } else resolve(a);
+                resolve(a);
+            } else reject(b);
         };
 
         try {
@@ -372,7 +374,8 @@ const countCollection = async (builder, config) => {
                 accessKey,
                 ...disableAuth ? {} : { authToken: Scoped.AuthJWTToken[projectUrl] },
                 serverE2E_PublicKey,
-                uglify
+                uglify,
+                extraHeaders
             });
 
             const data = await buildFetchResult(await fetch(_documentCount(projectUrl, uglify), reqBuilder), uglify);
@@ -417,13 +420,17 @@ const stripRequestConfig = (config) => {
     return requestConfig.length ? Object.fromEntries(requestConfig) : undefined;
 };
 
+const stripUndefined = o => Object.fromEntries(
+    Object.entries(o).filter(v => v[1] !== undefined)
+);
+
 const transformBSON = (d, castBSON) => {
     if (castBSON) return d && deserializeBSON(serializeToBase64({ _: d }), true)._;
     return cloneDeep(d);
 };
 
 const findObject = async (builder, config) => {
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, disableCache, uglify, command, castBSON } = builder;
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, disableCache, uglify, extraHeaders, command, castBSON } = builder;
     const { find, findOne, sort, direction, limit, random } = command;
     const { retrieval = RETRIEVAL.DEFAULT, episode = 0, disableAuth, disableMinimizer } = config || {};
     const enableMinimizer = !disableMinimizer;
@@ -496,7 +503,7 @@ const findObject = async (builder, config) => {
 
             const [reqBuilder, [privateKey]] = await buildFetchInterface({
                 body: {
-                    commands: {
+                    commands: stripUndefined({
                         config: pureConfig && serializeToBase64(pureConfig),
                         path,
                         find: serializeToBase64(findOne || find),
@@ -504,14 +511,15 @@ const findObject = async (builder, config) => {
                         direction,
                         limit,
                         random
-                    },
+                    }),
                     dbName,
                     dbUrl
                 },
                 accessKey,
                 authToken: disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
                 serverE2E_PublicKey,
-                uglify
+                uglify,
+                extraHeaders
             });
 
             const data = await buildFetchResult(await fetch((findOne ? _readDocument : _queryCollection)(projectUrl, uglify), reqBuilder), uglify);
@@ -585,7 +593,7 @@ const commitData = async (builder, value, type, config) => {
         )._;
     }
 
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, find, disableCache, uglify } = builder;
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, find, disableCache, uglify, extraHeaders } = builder;
     const { disableAuth, delivery = DELIVERY.DEFAULT, stepping } = config || {};
     const writeId = `${Date.now() + ++Scoped.PendingIte}`;
     const isBatchWrite = type === 'batchWrite';
@@ -632,21 +640,22 @@ const commitData = async (builder, value, type, config) => {
 
             const [reqBuilder, [privateKey]] = await buildFetchInterface({
                 body: {
-                    commands: {
+                    commands: stripUndefined({
                         value: value && serializeToBase64({ _: value }),
                         ...isBatchWrite ? { stepping } : {
                             path,
                             scope: type,
                             find: find && serializeToBase64(find)
                         }
-                    },
+                    }),
                     dbName,
                     dbUrl
                 },
                 accessKey,
                 serverE2E_PublicKey,
                 authToken: disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
-                uglify
+                uglify,
+                extraHeaders
             });
 
             const data = await buildFetchResult(await fetch((isBatchWrite ? _writeMapDocument : _writeDocument)(projectUrl, uglify), reqBuilder), uglify);

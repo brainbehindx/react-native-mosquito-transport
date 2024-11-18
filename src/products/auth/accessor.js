@@ -2,7 +2,7 @@ import { doSignOut } from ".";
 import EngineApi from "../../helpers/engine_api";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
 import { decodeBinary, deserializeE2E, listenReachableServer } from "../../helpers/peripherals";
-import { awaitStore, buildFetchInterface, getPrefferTime, updateCacheStore } from "../../helpers/utils";
+import { awaitStore, buildFetchInterface, buildFetchResult, getPrefferTime, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { simplifyError } from "simplify-error";
 
@@ -75,8 +75,8 @@ export const initTokenRefresher = async (config, forceRefresh) => {
 };
 
 const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7, isForceRefresh) => new Promise(async (resolve, reject) => {
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
-    const lostProcess = simplifyError('process_lost', 'The token refresh process has been lost and replace with another one');
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
+    const lostProcess = simplifyError('process_lost', 'The token refresh process has been lost and replaced with another one');
 
     try {
         const { token, refreshToken: r_token } = CacheStore.AuthStore[projectUrl];
@@ -85,18 +85,22 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
             body: { token, r_token },
             accessKey,
             uglify,
-            serverE2E_PublicKey
+            serverE2E_PublicKey,
+            extraHeaders
         });
 
-        const r = await (await fetch(EngineApi._refreshAuthToken(projectUrl, uglify), reqBuilder)).json();
+        let data;
 
-        if (processRef !== Scoped.LastTokenRefreshRef[projectUrl]) {
-            reject(lostProcess.simpleError);
-            return;
+        try {
+            data = await buildFetchResult(await fetch(EngineApi._refreshAuthToken(projectUrl, uglify), reqBuilder), uglify);
+        } finally {
+            if (processRef !== Scoped.LastTokenRefreshRef[projectUrl]) {
+                reject(lostProcess.simpleError);
+                return;
+            }
         }
-        if (r.simpleError) throw r;
 
-        const f = uglify ? await deserializeE2E(r.e2e, serverE2E_PublicKey, privateKey) : r;
+        const f = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
         if (CacheStore.AuthStore[projectUrl]) {
             CacheStore.AuthStore[projectUrl].token = f.result.token;

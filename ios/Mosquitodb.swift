@@ -95,6 +95,12 @@ class MosquitodbUploadTask: NSObject, URLSessionDataDelegate {
             
             var request = URLRequest(url: URL(string: url)!)
             request.httpMethod = "POST"
+
+            if let extraHeaders = options["extraHeaders"] as? [[String: String]] {
+                for (key, value) in extraHeaders {
+                    request.setValue(value, forHTTPHeaderField: key)
+                }
+            }
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             request.setValue(authorization, forHTTPHeaderField: "Authorization")
             if options["authToken"] != nil {
@@ -188,6 +194,12 @@ class MosquitodbDownloadTask: NSObject, URLSessionDownloadDelegate {
         
         var request = URLRequest(url: URL(string: url)!)
         request.httpMethod = "POST"
+
+        if let extraHeaders = options["extraHeaders"] as? [[String: String]] {
+            for (key, value) in extraHeaders {
+                request.setValue(value, forHTTPHeaderField: key)
+            }
+        }
         request.setValue(authorization, forHTTPHeaderField: "Authorization")
         if options["authToken"] != nil {
             request.setValue(options["authToken"] as? String, forHTTPHeaderField: "Mosquito-Token")
@@ -250,7 +262,7 @@ class MosquitodbDownloadTask: NSObject, URLSessionDownloadDelegate {
                             "result": "{\"file\": \"\(dest)\"}"
                         ]
                     ])
-                }else{
+                } else {
                     let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                     let urlName = mainOptions["urlName"] as! String
                     let destDir = documentsURL.appendingPathComponent("mosquito-transport")

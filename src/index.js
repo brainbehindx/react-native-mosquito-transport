@@ -1,4 +1,3 @@
-import './polyfill';
 import 'react-native-get-random-values';
 import { deserializeE2E, listenReachableServer, serializeE2E } from "./helpers/peripherals";
 import { awaitStore, releaseCacheStore } from "./helpers/utils";
@@ -45,7 +44,7 @@ class RNMT {
             maxRetries: config.maxRetries || 3,
             uglify: config.enableE2E_Encryption
         };
-        const { projectUrl } = this.config;
+        const { projectUrl, extraHeaders } = this.config;
 
         this.config.secureUrl = projectUrl.startsWith('https');
         this.config.baseUrl = projectUrl.split('://')[1];
@@ -66,6 +65,7 @@ class RNMT {
 
             const socket = io(`${this.config.wsPrefix}://${this.config.baseUrl}`, {
                 transports: ['websocket', 'polling', 'flashsocket'],
+                extraHeaders,
                 auth: {
                     _m_internal: true,
                     _from_base: true
@@ -137,7 +137,7 @@ class RNMT {
 
     getSocket = (configOpts) => {
         const { disableAuth, authHandshake } = configOpts || {};
-        const { projectUrl, uglify, accessKey, serverE2E_PublicKey, wsPrefix } = this.config;
+        const { projectUrl, uglify, accessKey, serverE2E_PublicKey, wsPrefix, extraHeaders } = this.config;
 
         const restrictedRoute = [
             _listenCollection,
@@ -168,22 +168,23 @@ class RNMT {
                 return;
             }
 
-            const [args, emitable] = [...arguments];
+            const [[args, not_encrypted], emitable] = [...arguments];
             let res;
 
             if (uglify) {
                 res = await deserializeE2E(args, serverE2E_PublicKey, clientPrivateKey);
             } else res = args;
+            const sortedArgs = discloseSocketArguments([res, not_encrypted]);
 
-            callback?.(...res || [], ...typeof emitable === 'function' ? [async function () {
-                const args = [...arguments];
+            callback?.(...sortedArgs, ...typeof emitable === 'function' ? [async function () {
+                const [args, not_encrypted] = encloseSocketArguments([...arguments]);
                 let res;
 
                 if (uglify) {
                     res = (await serializeE2E(args, undefined, serverE2E_PublicKey))[0];
                 } else res = args;
 
-                emitable(res);
+                emitable([res, not_encrypted]);
             }] : []);
         };
 
@@ -212,7 +213,7 @@ class RNMT {
 
                 const lastEmit = emittion.slice(-1)[0];
                 const hasEmitable = typeof lastEmit === 'function';
-                const mit = hasEmitable ? emittion.slice(0, -1) : emittion;
+                const [mit, not_encrypted] = encloseSocketArguments(hasEmitable ? emittion.slice(0, -1) : emittion);
 
                 const [reqBuilder, [privateKey]] = uglify ? await serializeE2E(mit, undefined, serverE2E_PublicKey) : [undefined, []];
 
@@ -220,20 +221,21 @@ class RNMT {
                     throw 'emitWithAck cannot have function in it argument';
 
                 const result = await thisSocket[promise ? 'emitWithAck' : 'emit'](route,
-                    uglify ? reqBuilder : mit,
+                    [uglify ? reqBuilder : mit, not_encrypted],
                     ...hasEmitable ? [async function () {
-                        const [args] = [...arguments];
+                        const [[args, not_encrypted]] = [...arguments];
                         let res;
 
                         if (uglify) {
                             res = await deserializeE2E(args, serverE2E_PublicKey, privateKey);
                         } else res = args;
 
-                        lastEmit(...res || []);
+                        lastEmit(...discloseSocketArguments([res, not_encrypted]));
                     }] : []
                 );
-
-                resolve((promise && result) ? uglify ? (await deserializeE2E(result, serverE2E_PublicKey, privateKey))[0] : result[0] : undefined);
+                if (promise && result) {
+                    resolve(discloseSocketArguments([uglify ? await deserializeE2E(result[0], serverE2E_PublicKey, privateKey) : result[0], result[1]])[0]);
+                } else resolve();
             } catch (e) {
                 reject(e);
             }
@@ -246,9 +248,10 @@ class RNMT {
 
             socket = io(`${wsPrefix}://${projectUrl.split('://')[1]}`, {
                 transports: ['websocket', 'polling', 'flashsocket'],
+                extraHeaders,
                 auth: uglify ? {
                     ugly: true,
-                    e2e: reqBuilder
+                    e2e: reqBuilder.toString('base64')
                 } : {
                     ...mtoken ? { mtoken } : {},
                     a_extras: authHandshake,
@@ -342,6 +345,31 @@ class RNMT {
     }
 };
 
+class DoNotEncrypt {
+    constructor(value) {
+        this.value = value;
+    }
+};
+
+const encloseSocketArguments = (args) => {
+    const [encrypted, unencrypted] = [{}, {}];
+
+    args.forEach((v, i) => {
+        if (v instanceof DoNotEncrypt) {
+            unencrypted[i] = v.value;
+        } else encrypted[i] = v;
+    });
+    return [encrypted, unencrypted];
+}
+
+const discloseSocketArguments = (args = []) => {
+    return args.map((obj, i) => Object.entries(obj).map(v => i ? [v[0], new DoNotEncrypt(v[1])] : v)).flat()
+        .sort((a, b) => (a[0] * 1) - (b[0] * 1)).map((v, i) => {
+            if (v[0] * 1 !== i) throw 'corrupted socket arguments';
+            return v[1];
+        });
+}
+
 const validateReleaseCacheProp = (prop) => {
     const cacheList = [...Object.values(CACHE_PROTOCOL)];
 
@@ -409,6 +437,16 @@ const validator = {
     serverE2E_PublicKey: (v) => {
         if (typeof v !== 'string' || !v.trim())
             throw `Invalid value supplied to serverETE_PublicKey, value must be a non-empty string`;
+    },
+    extraHeaders: v => {
+        if (!Validator.OBJECT(v)) throw '"extraHeaders" must be an object';
+        const reservedHeaders = ['mtoken', 'mosquito-token', 'init-content-type', 'content-type', 'authorization', 'uglified'];
+
+        Object.entries(v).forEach(([k, v]) => {
+            if (typeof v !== 'string') throw `expected a string at extraHeaders.${k} but got "${v}"`;
+            if (reservedHeaders.includes(v.toLowerCase()))
+                throw `extraHeaders must not include any reserved props which are: ${reservedHeaders}`;
+        });
     }
 };
 
@@ -428,6 +466,7 @@ const validateMTConfig = (config, that) => {
 }
 
 export {
+    DoNotEncrypt,
     TIMESTAMP,
     DOCUMENT_EXTRACTION,
     FIND_GEO_JSON,
