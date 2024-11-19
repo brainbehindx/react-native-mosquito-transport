@@ -27,10 +27,11 @@ export class MTStorage {
         this.builder = { ...config };
     }
 
-    downloadFile(link = '', onComplete, destination, onProgress) {
+    downloadFile(link = '', onComplete, destination, onProgress, options) {
+        const { awaitServer } = options || {};
         let hasFinished, isPaused, hasCancelled;
 
-        const { projectUrl, accessKey, awaitStorage } = this.builder;
+        const { projectUrl, accessKey, extraHeaders } = this.builder;
 
         if (destination && (typeof destination !== 'string' || !destination.trim())) {
             onComplete?.({ error: 'destination_invalid', message: 'destination must be a non-empty string' });
@@ -49,7 +50,7 @@ export class MTStorage {
 
         const processID = `${++Scoped.StorageProcessID}`;
         const init = async () => {
-            if (awaitStorage) await awaitReachableServer(projectUrl);
+            if (awaitServer) await awaitReachableServer(projectUrl);
             await awaitRefreshToken(projectUrl);
 
             if (hasCancelled) return;
@@ -97,7 +98,8 @@ export class MTStorage {
                 } : {},
                 processID,
                 urlName: link.split('/').pop(),
-                authorization: `Bearer ${encodeBinary(accessKey)}`
+                authorization: `Bearer ${encodeBinary(accessKey)}`,
+                extraHeaders: extraHeaders || {},
             });
         }
 
@@ -113,7 +115,8 @@ export class MTStorage {
         }
     }
 
-    uploadFile(file = '', destination = '', onComplete, onProgress, createHash) {
+    uploadFile(file = '', destination = '', onComplete, onProgress, options) {
+        const { createHash, awaitServer } = options || {};
         let hasFinished, hasCancelled;
 
         if (typeof file !== 'string' || !file.trim()) {
@@ -133,11 +136,11 @@ export class MTStorage {
 
         file = isAsset ? file.trim() : prefixStoragePath(file.trim());
 
-        const { projectUrl, accessKey, awaitStorage, uglify } = this.builder;
+        const { projectUrl, accessKey, uglify, extraHeaders } = this.builder;
         const processID = `${++Scoped.StorageProcessID}`;
 
         const init = async () => {
-            if (awaitStorage) await awaitReachableServer(projectUrl);
+            if (awaitServer) await awaitReachableServer(projectUrl);
             await awaitRefreshToken(projectUrl);
 
             if (hasCancelled) return;
@@ -168,7 +171,8 @@ export class MTStorage {
                 createHash: createHash ? 'yes' : 'no',
                 destination,
                 processID,
-                authorization: `Bearer ${encodeBinary(accessKey)}`
+                authorization: `Bearer ${encodeBinary(accessKey)}`,
+                extraHeaders: extraHeaders || {}
             });
         }
 

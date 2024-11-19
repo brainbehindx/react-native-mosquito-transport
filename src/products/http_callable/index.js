@@ -33,7 +33,7 @@ const buildFetchData = (data) => {
 }
 
 export const mfetch = async (input = '', init, config) => {
-    const { projectUrl, serverE2E_PublicKey, method, maxRetries = 7, disableCache, accessKey, uglify } = config;
+    const { projectUrl, serverE2E_PublicKey, method, maxRetries = 7, disableCache, accessKey, uglify, extraHeaders } = config;
     const { headers, body } = init || {};
 
     if (method !== undefined)
@@ -149,6 +149,7 @@ export const mfetch = async (input = '', init, config) => {
                 ...uglified ? { body: reqBuilder } : {},
                 cache: 'no-cache',
                 headers: {
+                    ...extraHeaders,
                     ...isBaseUrl ? {} : { 'content-type': 'application/json' },
                     ...rawHeader,
                     ...uglified ? {

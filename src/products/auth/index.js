@@ -66,7 +66,7 @@ export class MTAuth {
             socket = io(`${wsPrefix}://${baseUrl}`, {
                 transports: ['websocket', 'polling', 'flashsocket'],
                 auth: uglify ? {
-                    e2e: reqBuilder,
+                    e2e: reqBuilder.toString('base64'),
                     _m_internal: true
                 } : { mtoken, _m_internal: true }
             });
@@ -166,7 +166,7 @@ export class MTAuth {
 };
 
 const doCustomSignin = (builder, email, password) => new Promise(async (resolve, reject) => {
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
 
     try {
         await awaitStore();
@@ -174,7 +174,8 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
             body: { data: `${encodeBinary(email)}.${encodeBinary(password)}` },
             accessKey,
             serverE2E_PublicKey,
-            uglify
+            uglify,
+            extraHeaders
         });
 
         const data = await buildFetchResult(await fetch(_customSignin(projectUrl, uglify), reqBuilder), uglify);
@@ -193,7 +194,7 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
 });
 
 const doCustomSignup = (builder, email, password, name, metadata) => new Promise(async (resolve, reject) => {
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
 
     try {
         await awaitStore();
@@ -204,7 +205,8 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
             },
             accessKey,
             serverE2E_PublicKey,
-            uglify
+            uglify,
+            extraHeaders
         });
 
         const data = await buildFetchResult(await fetch(_customSignup(projectUrl, uglify), reqBuilder), uglify);
@@ -236,7 +238,7 @@ const clearCacheForSignout = (builder) => {
 export const doSignOut = async (builder) => {
     await awaitStore();
 
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder,
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder,
         { token, refreshToken: r_token } = CacheStore.AuthStore[projectUrl];
 
     clearCacheForSignout(builder);
@@ -250,11 +252,11 @@ export const doSignOut = async (builder) => {
                 body: { token, r_token },
                 accessKey,
                 uglify,
-                serverE2E_PublicKey
+                serverE2E_PublicKey,
+                extraHeaders
             });
 
-            const r = await (await fetch(_signOut(projectUrl, uglify), reqBuilder)).json();
-            if (r.simpleError) throw r;
+            await buildFetchResult(await fetch(_signOut(projectUrl, uglify), reqBuilder), uglify);
         } catch (e) {
             throw simplifyCaughtError(e).simpleError;
         }
@@ -262,7 +264,7 @@ export const doSignOut = async (builder) => {
 };
 
 const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) => {
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify } = builder;
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
 
     try {
         await awaitStore();
@@ -270,7 +272,8 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
             body: { token },
             accessKey,
             uglify,
-            serverE2E_PublicKey
+            serverE2E_PublicKey,
+            extraHeaders
         });
 
         const data = await buildFetchResult(await fetch(_googleSignin(projectUrl, uglify), reqBuilder), uglify);

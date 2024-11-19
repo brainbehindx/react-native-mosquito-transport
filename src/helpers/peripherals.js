@@ -118,7 +118,7 @@ export const serializeE2E = async (data, auth_token, serverPublicKey) => {
                         auth_token
                     ]),
                     nonce,
-                    Buffer.from(serverPublicKey, 'base64'),
+                    serverPublicKey,
                     pair.secretKey
                 )
             )
@@ -130,9 +130,9 @@ export const serializeE2E = async (data, auth_token, serverPublicKey) => {
 export const deserializeE2E = async (data, serverPublicKey, clientPrivateKey) => {
     const [binaryNonce, binaryData] = deserialize(data),
         baseArray = box.open(
-            Buffer.from(binaryData, 'base64'),
-            Buffer.from(binaryNonce, 'base64'),
-            Buffer.from(serverPublicKey, 'base64'),
+            binaryData,
+            binaryNonce,
+            serverPublicKey,
             clientPrivateKey
         );
 
