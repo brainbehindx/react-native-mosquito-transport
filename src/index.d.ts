@@ -68,12 +68,12 @@ export class DoNotEncrypt {
 }
 
 interface auth_provider_id {
-    GOOGLE: 'google.com';
-    FACEBOOK: 'facebook.com';
+    GOOGLE: 'google';
+    FACEBOOK: 'facebook';
     PASSWORD: 'password';
-    TWITTER: 'x.com';
-    GITHUB: 'github.com';
-    APPLE: 'apple.com';
+    TWITTER: 'x';
+    GITHUB: 'github';
+    APPLE: 'apple';
 }
 
 type auth_provider_id_values = auth_provider_id['GOOGLE'] |

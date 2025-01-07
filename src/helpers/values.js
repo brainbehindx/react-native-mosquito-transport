@@ -34,10 +34,10 @@ export const DELIVERY = {
 };
 
 export const AUTH_PROVIDER_ID = {
-    GOOGLE: 'google.com',
-    FACEBOOK: 'facebook.com',
+    GOOGLE: 'google',
+    FACEBOOK: 'facebook',
     PASSWORD: 'password',
-    TWITTER: 'x.com',
-    GITHUB: 'github.com',
-    APPLE: 'apple.com'
+    TWITTER: 'x',
+    GITHUB: 'github',
+    APPLE: 'apple'
 };
