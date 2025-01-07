@@ -12,11 +12,13 @@ export const updateCacheStore = (timer = 300) => {
 
     clearTimeout(Scoped.cacheStorageReducer);
     Scoped.cacheStorageReducer = setTimeout(() => {
-        const { AuthStore, DatabaseStore, PendingWrites, ...restStore } = CacheStore;
+        const { AuthStore, EmulatedAuth, PendingAuthPurge, DatabaseStore, PendingWrites, ...restStore } = CacheStore;
 
         const txt = encryptString(
             JSON.stringify({
                 AuthStore,
+                EmulatedAuth,
+                PendingAuthPurge,
                 ...promoteCache ? {
                     DatabaseStore: serializeToBase64(DatabaseStore),
                     PendingWrites: serializeToBase64(PendingWrites)

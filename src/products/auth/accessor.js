@@ -1,10 +1,12 @@
-import { doSignOut } from ".";
+import cloneDeep from "lodash.clonedeep";
+import { doSignOut, revokeAuthIntance } from ".";
 import EngineApi from "../../helpers/engine_api";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
 import { decodeBinary, deserializeE2E, listenReachableServer } from "../../helpers/peripherals";
 import { awaitStore, buildFetchInterface, buildFetchResult, getPrefferTime, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { simplifyError } from "simplify-error";
+import { Validator } from "guard-object";
 
 export const listenToken = (callback, projectUrl) =>
     AuthTokenListener.listenTo(projectUrl, (t, n) => {
@@ -18,8 +20,35 @@ export const injectFreshToken = async (config, { token, refreshToken }) => {
     await awaitStore();
     CacheStore.AuthStore[projectUrl] = { token, refreshToken };
     Scoped.AuthJWTToken[projectUrl] = token;
+    if (projectUrl in CacheStore.EmulatedAuth)
+        delete CacheStore.EmulatedAuth[projectUrl];
+
     updateCacheStore(0);
 
+    triggerAuthToken(projectUrl);
+    initTokenRefresher(config);
+};
+
+export const injectEmulatedAuth = async (config, emulatedURL) => {
+    await awaitStore();
+    if (typeof emulatedURL !== 'string' || (!Validator.HTTPS(emulatedURL) && !Validator.HTTP(emulatedURL)))
+        throw `Expected "projectUrl" to be valid https or http link but got "${emulatedURL}"`;
+
+    const { projectUrl } = config;
+    const { token } = CacheStore.AuthStore[emulatedURL] || {};
+    const depended = Object.entries(CacheStore.EmulatedAuth).find(([_, v]) => projectUrl === v);
+
+    if (emulatedURL === projectUrl) throw `auth instance for ${emulatedURL} cannot emulate itself`;
+    if (depended) throw `Chain Emulation Error: this auth instance (${projectUrl}) cannot be emulated as other auth instance (${depended[0]}) is already emulating it`;
+
+    const thisAuthStore = cloneDeep(CacheStore.AuthStore[projectUrl]);
+
+    CacheStore.AuthStore[projectUrl] = cloneDeep(CacheStore.AuthStore[emulatedURL]);
+    Scoped.AuthJWTToken[projectUrl] = token;
+    CacheStore.EmulatedAuth[projectUrl] = emulatedURL;
+
+    revokeAuthIntance(config, thisAuthStore);
+    updateCacheStore(0);
     triggerAuthToken(projectUrl);
     initTokenRefresher(config);
 };
@@ -46,9 +75,18 @@ export const initTokenRefresher = async (config, forceRefresh) => {
     const { projectUrl, maxRetries } = config;
     await awaitStore();
     const { token } = CacheStore.AuthStore[projectUrl] || {};
+    const emulatedURL = CacheStore.EmulatedAuth[projectUrl];
     const tokenInfo = token && parseToken(token);
 
     clearInterval(Scoped.TokenRefreshTimer[projectUrl]);
+    if (emulatedURL) return;
+
+    const notifyAuthReady = (value) => {
+        TokenRefreshListener.dispatch(projectUrl, value);
+        getEmulatedLinks(projectUrl).forEach(v => {
+            TokenRefreshListener.dispatch(v, value);
+        });
+    }
 
     if (token) {
         const expireOn = (tokenInfo.exp * 1000) - 60000;
@@ -56,23 +94,27 @@ export const initTokenRefresher = async (config, forceRefresh) => {
         const rizz = () => refreshToken(config, ++Scoped.LastTokenRefreshRef[projectUrl], maxRetries, maxRetries, forceRefresh);
 
         if (hasExpire || forceRefresh) {
-            TokenRefreshListener.dispatch(projectUrl);
+            notifyAuthReady();
             return rizz();
         } else {
-            TokenRefreshListener.dispatch(projectUrl, 'ready');
+            notifyAuthReady('ready');
             Scoped.TokenRefreshTimer[projectUrl] = setInterval(() => {
                 const countdown = expireOn - getPrefferTime();
                 if (countdown > 3000) return;
                 clearInterval(Scoped.TokenRefreshTimer[projectUrl]);
-                TokenRefreshListener.dispatch(projectUrl);
+                notifyAuthReady();
                 rizz();
             }, 3000);
         }
     } else if (forceRefresh) {
-        TokenRefreshListener.dispatch(projectUrl, 'ready');
-        return simplifyError('no_token_yet', 'No token is available to initiate a refresh').simpleError
+        notifyAuthReady('ready');
+        return simplifyError('no_token_yet', 'No token is available to initiate a refresh').simpleError;
     }
 };
+
+export const getEmulatedLinks = (projectUrl) => Object.entries(CacheStore.EmulatedAuth)
+    .filter(([_, v]) => v === projectUrl)
+    .map(v => v[0]);
 
 const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7, isForceRefresh) => new Promise(async (resolve, reject) => {
     const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
@@ -107,8 +149,18 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
             Scoped.AuthJWTToken[projectUrl] = f.result.token;
 
             resolve(f.result.token);
-            triggerAuthToken(projectUrl, !Scoped.InitiatedForcedToken[projectUrl] && isForceRefresh);
+            const isInit = !Scoped.InitiatedForcedToken[projectUrl] && isForceRefresh;
+
+            triggerAuthToken(projectUrl, isInit);
             if (isForceRefresh) Scoped.InitiatedForcedToken[projectUrl] = true;
+
+            getEmulatedLinks(projectUrl).forEach(v => {
+                CacheStore.AuthStore[v] = cloneDeep(CacheStore.AuthStore[projectUrl]);
+                Scoped.AuthJWTToken[v] = f.result.token;
+
+                triggerAuthToken(v, isInit);
+                if (isForceRefresh) Scoped.InitiatedForcedToken[v] = true;
+            });
             updateCacheStore();
             initTokenRefresher(builder);
         } else reject(lostProcess.simpleError);

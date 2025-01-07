@@ -10,6 +10,7 @@
         "clearInterval": true,
         "setInterval": true,
         "AbortController": true,
-        "URLSearchParams": true
+        "URLSearchParams": true,
+        "URL": true
     }
 }

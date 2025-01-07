@@ -68,12 +68,12 @@ export class DoNotEncrypt {
 }
 
 interface auth_provider_id {
-    GOOGLE: 'google.com';
-    FACEBOOK: 'facebook.com';
+    GOOGLE: 'google';
+    FACEBOOK: 'facebook';
     PASSWORD: 'password';
-    TWITTER: 'x.com';
-    GITHUB: 'github.com';
-    APPLE: 'apple.com';
+    TWITTER: 'x';
+    GITHUB: 'github';
+    APPLE: 'apple';
 }
 
 type auth_provider_id_values = auth_provider_id['GOOGLE'] |
@@ -148,7 +148,7 @@ interface BatchWriteConfig extends WriteConfig {
 
 export default class RNMT {
     constructor(config: RNMTConfig);
-    static releaseCache(option?: ReleaseCacheOption | ReleaseCacheOption_IO): void;
+    static initializeCache(option?: ReleaseCacheOption | ReleaseCacheOption_IO): void;
     getDatabase(dbName?: string, dbUrl?: string): GetDatabase;
     collection(path: string): RNMTCollection;
     auth(): RNMTAuth;
@@ -399,6 +399,7 @@ interface RNMTAuth {
     getAuth: () => Promise<TokenEventData>;
     signOut: () => Promise<void>;
     forceRefreshToken: () => Promise<string>;
+    emulate: (projectUrl?: string) => Promise<void>;
 }
 
 interface SigninResult {
