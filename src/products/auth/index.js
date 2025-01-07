@@ -3,19 +3,28 @@ import EngineApi from "../../helpers/engine_api";
 import { TokenRefreshListener } from "../../helpers/listeners";
 import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
-import { awaitRefreshToken, initTokenRefresher, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
+import { awaitRefreshToken, getEmulatedLinks, initTokenRefresher, injectEmulatedAuth, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
 import { deserializeE2E, encodeBinary, serializeE2E } from "../../helpers/peripherals";
 import { simplifyCaughtError, simplifyError } from "simplify-error";
+import cloneDeep from "lodash.clonedeep";
+
+// purge residue tokens
+awaitStore().then(() => {
+    Object.keys(CacheStore.PendingAuthPurge).forEach(k => {
+        purgePendingToken(k);
+    });
+});
 
 const {
     _listenUserVerification,
     _signOut,
     _customSignin,
     _customSignup,
-    _googleSignin
+    _googleSignin,
+    _areYouOk
 } = EngineApi;
 
-export class MTAuth {
+export default class MTAuth {
     constructor(config) {
         this.builder = { ...config };
     }
@@ -163,6 +172,10 @@ export class MTAuth {
     signOut = () => doSignOut(this.builder);
 
     forceRefreshToken = () => initTokenRefresher(this.builder, true);
+
+    emulate = async (projectUrl) => {
+        await injectEmulatedAuth(this.builder, projectUrl);
+    }
 };
 
 const doCustomSignin = (builder, email, password) => new Promise(async (resolve, reject) => {
@@ -170,6 +183,8 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
 
     try {
         await awaitStore();
+        const thisAuthStore = cloneDeep(CacheStore.AuthStore[projectUrl]);
+
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { data: `${encodeBinary(email)}.${encodeBinary(password)}` },
             accessKey,
@@ -188,6 +203,7 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
             refreshToken: r.result.refreshToken
         });
         await injectFreshToken(builder, r.result);
+        revokeAuthIntance(builder, thisAuthStore);
     } catch (e) {
         reject(simplifyCaughtError(e).simpleError);
     }
@@ -198,6 +214,8 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
 
     try {
         await awaitStore();
+        const thisAuthStore = cloneDeep(CacheStore.AuthStore[projectUrl]);
+
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: {
                 data: `${encodeBinary(email)}.${encodeBinary(password)}.${(encodeBinary((name || '').trim()))}`,
@@ -219,47 +237,88 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
             refreshToken: r.result.refreshToken
         });
         await injectFreshToken(builder, r.result);
+        revokeAuthIntance(builder, thisAuthStore);
     } catch (e) {
         reject(simplifyCaughtError(e).simpleError);
     }
 });
 
-const clearCacheForSignout = (builder) => {
-    const { projectUrl } = builder;
-    if (Scoped.AuthJWTToken[projectUrl]) delete Scoped.AuthJWTToken[projectUrl];
+const purgeCache = (url, isMain) => {
+    if (url in Scoped.AuthJWTToken) delete Scoped.AuthJWTToken[url];
     Object.keys(CacheStore).forEach(e => {
-        if (CacheStore[e][projectUrl]) delete CacheStore[e][projectUrl];
+        if (
+            e !== 'PendingAuthPurge' &&
+            (!['EmulatedAuth'].includes(e) || isMain)
+        ) {
+            if (CacheStore[e][url]) delete CacheStore[e][url];
+        }
     });
-    TokenRefreshListener.dispatch(projectUrl);
-    triggerAuthToken(projectUrl);
+    TokenRefreshListener.dispatch(url);
+    triggerAuthToken(url);
+};
+
+const clearCacheForSignout = (builder, disposeEmulated) => {
+    const { projectUrl } = builder;
+
+    purgeCache(projectUrl, true);
+    if (disposeEmulated) getEmulatedLinks(projectUrl).forEach(e => purgeCache(e));
     initTokenRefresher(builder);
 };
 
 export const doSignOut = async (builder) => {
     await awaitStore();
+    const emulatedURL = CacheStore.EmulatedAuth[builder.projectUrl];
 
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder,
-        { token, refreshToken: r_token } = CacheStore.AuthStore[projectUrl];
-
-    clearCacheForSignout(builder);
+    clearCacheForSignout(builder, !emulatedURL);
     updateCacheStore(0);
+    if (emulatedURL) return;
+    await revokeAuthIntance(builder);
+};
 
-    if (token) {
+export const revokeAuthIntance = async (builder, authStore) => {
+    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
+    const { token, refreshToken: r_token } = { ...authStore };
+
+    if (!r_token || CacheStore.EmulatedAuth[projectUrl]) return;
+    const nodeId = `${Math.random()}`;
+
+    CacheStore.PendingAuthPurge[nodeId] = {
+        auth: { token, refreshToken: r_token },
+        data: { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders }
+    };
+    await purgePendingToken(nodeId);
+};
+
+const purgePendingToken = async (nodeId) => {
+    const {
+        auth: { token, refreshToken: r_token },
+        data: { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders }
+    } = CacheStore.PendingAuthPurge[nodeId];
+
+    if (!token) return;
+    try {
+        let isConnected;
         try {
+            isConnected = (await (await fetch(_areYouOk(projectUrl))).json()).status === 'yes';
+        } catch (_) { }
+
+        if (!isConnected)
             await awaitReachableServer(projectUrl);
 
-            const [reqBuilder] = await buildFetchInterface({
-                body: { token, r_token },
-                accessKey,
-                uglify,
-                serverE2E_PublicKey,
-                extraHeaders
-            });
+        const [reqBuilder] = await buildFetchInterface({
+            body: { token, r_token },
+            accessKey,
+            uglify,
+            serverE2E_PublicKey,
+            extraHeaders
+        });
 
-            await buildFetchResult(await fetch(_signOut(projectUrl, uglify), reqBuilder), uglify);
-        } catch (e) {
-            throw simplifyCaughtError(e).simpleError;
-        }
+        await buildFetchResult(await fetch(_signOut(projectUrl, uglify), reqBuilder), uglify);
+    } catch (e) {
+        throw simplifyCaughtError(e).simpleError;
+    } finally {
+        delete CacheStore.PendingAuthPurge[nodeId];
+        updateCacheStore(0);
     }
 };
 
@@ -268,6 +327,8 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
 
     try {
         await awaitStore();
+        const thisAuthStore = cloneDeep(CacheStore.AuthStore[projectUrl]);
+
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { token },
             accessKey,
@@ -287,6 +348,7 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
             isNewUser: f.result.isNewUser
         });
         await injectFreshToken(builder, f.result);
+        revokeAuthIntance(builder, thisAuthStore);
     } catch (e) {
         reject(simplifyCaughtError(e).simpleError);
     }
