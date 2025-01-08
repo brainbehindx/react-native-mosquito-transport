@@ -8,13 +8,6 @@ import { deserializeE2E, encodeBinary, serializeE2E } from "../../helpers/periph
 import { simplifyCaughtError, simplifyError } from "simplify-error";
 import cloneDeep from "lodash.clonedeep";
 
-// purge residue tokens
-awaitStore().then(() => {
-    Object.keys(CacheStore.PendingAuthPurge).forEach(k => {
-        purgePendingToken(k);
-    });
-});
-
 const {
     _listenUserVerification,
     _signOut,
@@ -289,7 +282,7 @@ export const revokeAuthIntance = async (builder, authStore) => {
     await purgePendingToken(nodeId);
 };
 
-const purgePendingToken = async (nodeId) => {
+export const purgePendingToken = async (nodeId) => {
     const {
         auth: { token, refreshToken: r_token },
         data: { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders }
@@ -299,7 +292,7 @@ const purgePendingToken = async (nodeId) => {
     try {
         let isConnected;
         try {
-            isConnected = (await (await fetch(_areYouOk(projectUrl))).json()).status === 'yes';
+            isConnected = (await (await fetch(_areYouOk(projectUrl))).json(), { cache: 'no-cache' }).status === 'yes';
         } catch (_) { }
 
         if (!isConnected)

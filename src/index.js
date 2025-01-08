@@ -1,7 +1,7 @@
 import 'react-native-get-random-values';
 import { deserializeE2E, listenReachableServer, serializeE2E } from "./helpers/peripherals";
 import { awaitStore, releaseCacheStore } from "./helpers/utils";
-import { Scoped } from "./helpers/variables";
+import { CacheStore, Scoped } from "./helpers/variables";
 import { MTCollection, batchWrite, trySendPendingWrite } from "./products/database";
 import { MTStorage } from "./products/storage";
 import { ServerReachableListener, TokenRefreshListener } from "./helpers/listeners";
@@ -14,7 +14,7 @@ import EngineApi from './helpers/engine_api';
 import { Validator } from 'guard-object';
 import cloneDeep from 'lodash.clonedeep';
 import { Buffer } from 'buffer';
-import MTAuth from './products/auth';
+import MTAuth, { purgePendingToken } from './products/auth';
 
 const {
     _listenCollection,
@@ -117,6 +117,12 @@ class RNMT {
         validateReleaseCacheProp({ ...prop });
         Scoped.ReleaseCacheData = { ...prop };
         releaseCacheStore({ ...prop });
+        // purge residue tokens
+        awaitStore().then(() => {
+            Object.keys(CacheStore.PendingAuthPurge).forEach(k => {
+                purgePendingToken(k);
+            });
+        });
     }
 
     getDatabase = (dbName, dbUrl) => ({
