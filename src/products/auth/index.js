@@ -118,6 +118,12 @@ export default class MTAuth {
         return CacheStore.AuthStore[this.builder.projectUrl]?.refreshToken;
     }
 
+    getRefreshTokenData = async () => {
+        await awaitStore();
+        const { refreshToken } = CacheStore.AuthStore[this.builder.projectUrl] || {};
+        return refreshToken && parseToken(refreshToken);
+    }
+
     parseToken = (token) => parseToken(token);
 
     getAuthToken = () => new Promise(resolve => {

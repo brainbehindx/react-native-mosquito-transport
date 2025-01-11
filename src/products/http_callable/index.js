@@ -61,8 +61,8 @@ export const mfetch = async (input = '', init, config) => {
     if ('uglified' in rawHeader)
         throw '"uglified" in header is a reserved prop';
 
-    if (isBaseUrl && !rawApproach)
-        throw `please set { rawApproach: true } if you're trying to access different endpoint at "${input}"`;
+    // if (isBaseUrl && !rawApproach)
+    //     throw `please set { rawApproach: true } if you're trying to access different endpoint at "${input}"`;
 
     if (body !== undefined) {
         if (
