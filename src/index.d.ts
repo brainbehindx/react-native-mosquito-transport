@@ -390,12 +390,12 @@ interface RNMTAuth {
     twitterSignin: () => Promise<SignupResult>;
     githubSignin: () => Promise<SignupResult>;
     listenVerifiedStatus: (callback?: (verified?: boolean) => void, onError?: (error?: ErrorResponse) => void) => () => void;
-    listenAuthToken: (callback: (token: string) => void) => () => void;
-    getAuthToken: () => Promise<string>;
-    getRefreshToken: () => Promise<string>;
-    getRefreshTokenData: () => Promise<RefreshTokenData>;
+    listenAuthToken: (callback: (token: string | null) => void) => () => void;
+    getAuthToken: () => Promise<string | null>;
+    getRefreshToken: () => Promise<string | undefined>;
+    getRefreshTokenData: () => Promise<RefreshTokenData | undefined>;
     parseToken: (token: string) => AuthData | RefreshTokenData;
-    listenAuth: (callback: (auth: TokenEventData) => void) => () => void;
+    listenAuth: (callback: (auth: TokenEventData | null) => void) => () => void;
     getAuth: () => Promise<TokenEventData>;
     signOut: () => Promise<void>;
     forceRefreshToken: () => Promise<string>;
@@ -438,10 +438,14 @@ interface RefreshTokenData {
     uid: string;
     tokenID: string;
     isRefreshToken: true;
+    exp: number;
+    aud: string;
+    iss: string;
+    sub: string;
 }
 
 interface TokenEventData extends AuthData {
-    tokenManager: TokenManager | null;
+    tokenManager: TokenManager;
 }
 
 interface TokenManager {
