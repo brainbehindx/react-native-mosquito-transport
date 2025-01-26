@@ -30,7 +30,7 @@ export const injectFreshToken = async (config, { token, refreshToken }) => {
 };
 
 export const injectEmulatedAuth = async (config, emulatedURL) => {
-    await awaitStore();
+    if (!Scoped.IsStoreReady) await awaitStore();
     if (typeof emulatedURL !== 'string' || (!Validator.HTTPS(emulatedURL) && !Validator.HTTP(emulatedURL)))
         throw `Expected "projectUrl" to be valid https or http link but got "${emulatedURL}"`;
 
@@ -40,14 +40,13 @@ export const injectEmulatedAuth = async (config, emulatedURL) => {
 
     if (emulatedURL === projectUrl) throw `auth instance for ${emulatedURL} cannot emulate itself`;
     if (depended) throw `Chain Emulation Error: this auth instance (${projectUrl}) cannot be emulated as other auth instance (${depended[0]}) is already emulating it`;
-
     const thisAuthStore = cloneDeep(CacheStore.AuthStore[projectUrl]);
+    revokeAuthIntance(config, thisAuthStore);
 
     CacheStore.AuthStore[projectUrl] = cloneDeep(CacheStore.AuthStore[emulatedURL]);
     Scoped.AuthJWTToken[projectUrl] = token;
     CacheStore.EmulatedAuth[projectUrl] = emulatedURL;
 
-    revokeAuthIntance(config, thisAuthStore);
     updateCacheStore(0);
     triggerAuthToken(projectUrl);
     initTokenRefresher(config);
@@ -73,7 +72,7 @@ export const listenTokenReady = (callback, projectUrl) => TokenRefreshListener.l
 
 export const initTokenRefresher = async (config, forceRefresh) => {
     const { projectUrl, maxRetries } = config;
-    await awaitStore();
+    if (!Scoped.IsStoreReady) await awaitStore();
     const { token } = CacheStore.AuthStore[projectUrl] || {};
     const emulatedURL = CacheStore.EmulatedAuth[projectUrl];
     const tokenInfo = token && parseToken(token);
@@ -106,9 +105,11 @@ export const initTokenRefresher = async (config, forceRefresh) => {
                 rizz();
             }, 3000);
         }
-    } else if (forceRefresh) {
+    } else {
         notifyAuthReady('ready');
-        return simplifyError('no_token_yet', 'No token is available to initiate a refresh').simpleError;
+        if (forceRefresh) {
+            return simplifyError('no_token_yet', 'No token is available to initiate a refresh').simpleError;
+        }
     }
 };
 

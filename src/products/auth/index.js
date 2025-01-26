@@ -265,7 +265,7 @@ const clearCacheForSignout = (builder, disposeEmulated) => {
 };
 
 export const doSignOut = async (builder) => {
-    await awaitStore();
+    if (!Scoped.IsStoreReady) await awaitStore();
     const emulatedURL = CacheStore.EmulatedAuth[builder.projectUrl];
 
     clearCacheForSignout(builder, !emulatedURL);
