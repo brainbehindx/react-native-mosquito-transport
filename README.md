@@ -25,8 +25,7 @@ RNMosquitoTransport.initializeCache({
 });
 
 const mclient = new RNMosquitoTransport({
-  projectUrl: "http://localhost:3444",
-  accessKey: "SERVER_ACCESS_KEY",
+  projectUrl: "http://localhost:3444"
 });
 ```
 
@@ -37,7 +36,6 @@ const mclient = new RNMosquitoTransport({
   - [dbUrl](#dbUrl)
   - [projectUrl](#projectUrl)
   - [disableCache](#disableCache)
-  - [accessKey](#accessKey)
   - [maxRetries](#maxRetries)
   - [enableE2E_Encryption](#enableE2E_Encryption)
   - [serverE2E_PublicKey](#serverE2E_PublicKey)

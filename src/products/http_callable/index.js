@@ -6,7 +6,7 @@ import { CacheStore, Scoped } from "../../helpers/variables";
 import { awaitRefreshToken } from "../auth/accessor";
 import { simplifyCaughtError } from "simplify-error";
 import { guardObject, Validator } from "guard-object";
-import cloneDeep from "lodash.clonedeep";
+import cloneDeep from "lodash/cloneDeep";
 import { serialize } from "entity-serializer";
 
 const buildFetchData = (data) => {
@@ -33,7 +33,7 @@ const buildFetchData = (data) => {
 }
 
 export const mfetch = async (input = '', init, config) => {
-    const { projectUrl, serverE2E_PublicKey, method, maxRetries = 7, disableCache, accessKey, uglify, extraHeaders } = config;
+    const { projectUrl, serverE2E_PublicKey, method, maxRetries = 7, disableCache, uglify, extraHeaders } = config;
     const { headers, body } = init || {};
 
     if (method !== undefined)
@@ -45,21 +45,21 @@ export const mfetch = async (input = '', init, config) => {
         }).validate(method);
 
     const { retrieval = RETRIEVAL.DEFAULT, enableMinimizer, rawApproach } = method || {};
-    const isBaseUrl = Validator.LINK(input);
+    const isLink = Validator.LINK(input);
+    const isBaseUrl = isLink || rawApproach;
     const disableAuth = method?.disableAuth || isBaseUrl;
-    const shouldCache = (retrieval !== RETRIEVAL.DEFAULT || !disableCache) &&
-        retrieval !== RETRIEVAL.NO_CACHE_NO_AWAIT;
+    const shouldCache = (retrieval !== RETRIEVAL.DEFAULT || (disableCache === undefined ? body === undefined : !disableCache)) &&
+        ![RETRIEVAL.NO_CACHE_NO_AWAIT, RETRIEVAL.NO_CACHE_AWAIT].includes(retrieval);
     const uglified = !!(!isBaseUrl && uglify);
 
     const rawHeader = Object.fromEntries(
         [...new Headers(headers).entries()]
     );
 
-    if ('mtoken' in rawHeader)
-        throw '"mtoken" in header is a reserved prop';
-
-    if ('uglified' in rawHeader)
-        throw '"uglified" in header is a reserved prop';
+    ['mtoken', 'uglified'].forEach(e => {
+        if ([e] in rawHeader)
+            throw `"${e}" in header is a reserved prop`;
+    });
 
     // if (isBaseUrl && !rawApproach)
     //     throw `please set { rawApproach: true } if you're trying to access different endpoint at "${input}"`;
@@ -143,11 +143,11 @@ export const mfetch = async (input = '', init, config) => {
 
             const [reqBuilder, [privateKey]] = uglified ? await serializeE2E(body, mtoken, serverE2E_PublicKey) : [null, []];
 
-            const f = await fetch(isBaseUrl ? input : `${projectUrl}/${normalizeRoute(input)}`, {
-                ...isBaseUrl ? {} : { method: 'POST' },
+            const f = await fetch(isLink ? input : `${projectUrl}/${normalizeRoute(input)}`, {
+                ...(!isBaseUrl || body) ? { method: 'POST' } : {},
                 ...init,
                 ...uglified ? { body: reqBuilder } : {},
-                cache: 'no-cache',
+                // cache: 'no-cache',
                 headers: {
                     ...extraHeaders,
                     ...isBaseUrl ? {} : { 'content-type': 'application/json' },
@@ -157,8 +157,7 @@ export const mfetch = async (input = '', init, config) => {
                         'content-type': 'request/buffer',
                         ...initType ? { 'init-content-type': initType } : {}
                     } : {},
-                    ...(disableAuth || !mtoken || uglified || isBaseUrl) ? {} : { mtoken },
-                    ...isBaseUrl ? {} : { authorization: `Bearer ${accessKey}` }
+                    ...(disableAuth || !mtoken || uglified || isBaseUrl) ? {} : { mtoken }
                 }
             });
             const { ok, type, status, statusText, redirected, url, headers, size } = f;

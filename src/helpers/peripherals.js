@@ -3,7 +3,7 @@ import { ServerReachableListener } from "./listeners";
 import aes_pkg from 'crypto-js/aes.js';
 import Utf8Encoder from 'crypto-js/enc-utf8.js';
 import naclPkg from 'tweetnacl';
-import getLodash from "lodash.get";
+import getLodash from "lodash/get";
 import { deserialize, serialize } from "entity-serializer";
 
 const { encrypt, decrypt } = aes_pkg;

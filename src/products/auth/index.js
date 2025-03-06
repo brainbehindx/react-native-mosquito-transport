@@ -6,7 +6,7 @@ import { CacheStore, Scoped } from "../../helpers/variables";
 import { awaitRefreshToken, getEmulatedLinks, initTokenRefresher, injectEmulatedAuth, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
 import { deserializeE2E, encodeBinary, serializeE2E } from "../../helpers/peripherals";
 import { simplifyCaughtError, simplifyError } from "simplify-error";
-import cloneDeep from "lodash.clonedeep";
+import cloneDeep from "lodash/cloneDeep";
 
 const {
     _listenUserVerification,
@@ -48,7 +48,6 @@ export default class MTAuth {
         const { projectUrl, serverE2E_PublicKey, uglify, baseUrl, wsPrefix } = this.builder;
 
         let socket,
-            wasDisconnected,
             hasCancelled,
             lastToken = Scoped.AuthJWTToken[projectUrl] || null,
             lastInitRef = 0;
@@ -67,13 +66,12 @@ export default class MTAuth {
 
             socket = io(`${wsPrefix}://${baseUrl}`, {
                 transports: ['websocket', 'polling', 'flashsocket'],
-                auth: uglify ? {
-                    e2e: reqBuilder.toString('base64'),
-                    _m_internal: true
-                } : { mtoken, _m_internal: true }
+                auth: {
+                    ...uglify ? { e2e: reqBuilder.toString('base64') } : { mtoken },
+                    _m_internal: true,
+                    _m_route: _listenUserVerification(uglify)
+                }
             });
-
-            socket.emit(_listenUserVerification(uglify));
 
             socket.on("onVerificationChanged", async ([err, verified]) => {
                 if (err) {
@@ -82,14 +80,6 @@ export default class MTAuth {
                     callback?.(uglify ? await deserializeE2E(verified, serverE2E_PublicKey, privateKey) : verified);
                 }
             });
-
-            socket.on('connect', () => {
-                if (wasDisconnected) socket.emit(_listenUserVerification(uglify));
-            });
-
-            socket.on('disconnect', () => {
-                wasDisconnected = true;
-            });
         };
 
         init();
@@ -97,7 +87,6 @@ export default class MTAuth {
         const tokenListener = listenToken(t => {
             if ((t || null) !== lastToken) {
                 socket?.close?.();
-                wasDisconnected = undefined;
                 init();
             }
             lastToken = t;
@@ -178,7 +167,7 @@ export default class MTAuth {
 };
 
 const doCustomSignin = (builder, email, password) => new Promise(async (resolve, reject) => {
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
+    const { projectUrl, serverE2E_PublicKey, uglify, extraHeaders } = builder;
 
     try {
         await awaitStore();
@@ -186,7 +175,6 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
 
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { data: `${encodeBinary(email)}.${encodeBinary(password)}` },
-            accessKey,
             serverE2E_PublicKey,
             uglify,
             extraHeaders
@@ -209,7 +197,7 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
 });
 
 const doCustomSignup = (builder, email, password, name, metadata) => new Promise(async (resolve, reject) => {
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
+    const { projectUrl, serverE2E_PublicKey, uglify, extraHeaders } = builder;
 
     try {
         await awaitStore();
@@ -220,7 +208,6 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
                 data: `${encodeBinary(email)}.${encodeBinary(password)}.${(encodeBinary((name || '').trim()))}`,
                 metadata,
             },
-            accessKey,
             serverE2E_PublicKey,
             uglify,
             extraHeaders
@@ -275,7 +262,7 @@ export const doSignOut = async (builder) => {
 };
 
 export const revokeAuthIntance = async (builder, authStore) => {
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
+    const { projectUrl, serverE2E_PublicKey, uglify, extraHeaders } = builder;
     const { token, refreshToken: r_token } = { ...authStore };
 
     if (!r_token || CacheStore.EmulatedAuth[projectUrl]) return;
@@ -283,7 +270,7 @@ export const revokeAuthIntance = async (builder, authStore) => {
 
     CacheStore.PendingAuthPurge[nodeId] = {
         auth: { token, refreshToken: r_token },
-        data: { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders }
+        data: { projectUrl, serverE2E_PublicKey, uglify, extraHeaders }
     };
     await purgePendingToken(nodeId);
 };
@@ -291,7 +278,7 @@ export const revokeAuthIntance = async (builder, authStore) => {
 export const purgePendingToken = async (nodeId) => {
     const {
         auth: { token, refreshToken: r_token },
-        data: { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders }
+        data: { projectUrl, serverE2E_PublicKey, uglify, extraHeaders }
     } = CacheStore.PendingAuthPurge[nodeId];
 
     if (!token) return;
@@ -306,7 +293,6 @@ export const purgePendingToken = async (nodeId) => {
 
         const [reqBuilder] = await buildFetchInterface({
             body: { token, r_token },
-            accessKey,
             uglify,
             serverE2E_PublicKey,
             extraHeaders
@@ -322,7 +308,7 @@ export const purgePendingToken = async (nodeId) => {
 };
 
 const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) => {
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
+    const { projectUrl, serverE2E_PublicKey, uglify, extraHeaders } = builder;
 
     try {
         await awaitStore();
@@ -330,7 +316,6 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
 
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { token },
-            accessKey,
             uglify,
             serverE2E_PublicKey,
             extraHeaders

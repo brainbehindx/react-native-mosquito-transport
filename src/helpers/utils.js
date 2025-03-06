@@ -117,18 +117,17 @@ export const getReachableServer = (projectUrl) => new Promise(resolve => {
     }, true);
 });
 
-export const buildFetchInterface = async ({ body, accessKey, authToken, method, uglify, serverE2E_PublicKey, extraHeaders }) => {
+export const buildFetchInterface = async ({ body, authToken, method, uglify, serverE2E_PublicKey, extraHeaders }) => {
     if (!uglify) body = JSON.stringify({ ...body });
     const [plate, keyPair] = uglify ? await serializeE2E(body, authToken, serverE2E_PublicKey) : [undefined, []];
 
     return [{
         body: uglify ? plate : body,
-        cache: 'no-cache',
+        // cache: 'no-cache',
         headers: {
+            ...extraHeaders,
             'Content-type': uglify ? 'request/buffer' : 'application/json',
-            'Authorization': accessKey,
-            ...(authToken && !uglify) ? { 'Mosquito-Token': authToken } : {},
-            ...extraHeaders
+            ...(authToken && !uglify) ? { 'Mosquito-Token': authToken } : {}
         },
         method: method || 'POST'
     }, keyPair];

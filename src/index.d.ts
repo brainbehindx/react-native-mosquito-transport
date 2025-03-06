@@ -2,8 +2,12 @@ interface RNMTConfig {
     dbName?: string;
     dbUrl?: string;
     projectUrl: string;
+    /**
+     * disable caching for database and fetchHttp in this instance.
+     * 
+     * defaults to `false` but `true` in scenerio where an invoked fetchHttp does have a request body and disableCache is undefined
+     */
     disableCache?: boolean;
-    accessKey: string;
     /**
      * maximum numbers of attempts to retry sending a request
      */
@@ -37,7 +41,8 @@ interface GetDatabase {
 interface mtimestamp { $timestamp: 'now' }
 
 export const TIMESTAMP: mtimestamp;
-export function DOCUMENT_EXTRACTION(path: string): { $dynamicValue: number };
+export function TIMESTAMP_OFFSET(offset: number): { $timestamp_offset: number };
+export function DOCUMENT_EXTRACTION(path: string): { $dynamicValue: string };
 
 type longitude = number;
 type latitude = number;
@@ -156,6 +161,7 @@ export default class RNMT {
     fetchHttp(endpoint: string, init?: RequestInit, config?: FetchHttpConfig): Promise<Response>;
     listenReachableServer(callback: (reachable: boolean) => void): () => void;
     getSocket(options: { disableAuth?: boolean; authHandshake?: Object }): RNMTSocket;
+    onConnect: () => CollectionIO;
     batchWrite(map: BatchWriteValue[], config?: BatchWriteConfig): Promise<DocumentWriteResult[] | undefined>;
 }
 
@@ -206,18 +212,6 @@ interface RNMTCollection {
         get: (config?: GetConfig) => Promise<DocumentResult>;
         listen: (callback: (snapshot?: DocumentResult) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
     });
-    onDisconnect: () => ({
-        setOne: (value: DocumentWriteValue) => () => void;
-        setMany: (value: DocumentWriteValue[]) => () => void;
-        updateOne: (find: DocumentFind, value: DocumentWriteValue) => () => void;
-        updateMany: (find: DocumentFind, value: DocumentWriteValue) => () => void;
-        mergeOne: (find: DocumentFind, value: DocumentWriteValue) => () => void;
-        mergeMany: (find: DocumentFind, value: DocumentWriteValue) => () => void;
-        replaceOne: (find: DocumentFind, value: DocumentWriteValue) => () => void;
-        putOne: (find: DocumentFind, value: DocumentWriteValue) => () => void;
-        deleteOne: (find: DocumentFind) => () => void;
-        deleteMany: (find?: DocumentFind) => () => void;
-    })
 
     setOne: (value: DocumentWriteValue, config?: WriteConfig) => Promise<DocumentWriteResult>;
 
@@ -240,8 +234,24 @@ interface RNMTCollection {
     deleteMany: (find?: DocumentFind, config?: WriteConfig) => Promise<DocumentWriteResult>;
 }
 
-interface DocumentResult {
-    _id: any
+interface CollectionTaskIO<T> {
+    batchWrite(map: BatchWriteValue[], config?: BatchWriteConfig): T;
+}
+
+interface StartStop {
+    start: () => () => void;
+}
+
+interface OnConnectChain extends StartStop {
+    onDisconnect: () => CollectionTaskIO<StartStop>;
+}
+
+interface CollectionIO extends CollectionTaskIO<OnConnectChain> {
+    onDisconnect: () => CollectionTaskIO<StartStop>;
+}
+
+interface DocumentResult extends Document {
+    _foreign_doc?: Document | Document[] | Document[][]
 }
 
 interface DocumentError extends ErrorResponse {
@@ -312,33 +322,31 @@ interface GetConfig {
      */
     episode?: 0 | 1;
     /**
-     * send authentication token along with this request
+     * disable sending authentication token along with this request
      * 
      * @default - false
      */
     disableAuth?: boolean;
     /**
-     * this reduces duplicate query calls with the same operation resultant to a single request call.
+     * this reduces redundant network calls for the same query operation to a single request call.
      * 
-     * - Example:
+     * @example
      * 
      * ```js
      * 
-     * const mserver = new RNMT({ projectUrl: 'http..', accessKey: '..'});
-     * const minimizedUser = ['james', 'john', 'james', 'john'];
-     * const unminimizedUser = ['anthony', 'albert', 'anthony', 'albert'];
+     * const mserver = new RNMT({ projectUrl: 'http://..' });
      * 
-     * // operation will be reduced to two request: james and john
+     * // operation will be reduced to only one request
      * 
-     * minimizedUser.forEach(e=> {
-     *   mserver.collection('user').findOne({ _id: e }).get();
-     * });
+     * for (let i = 0; i < 1000; i++) {
+     *     mserver.collection('user').findOne({ company: 'brainbehindx' }).get({ disableMinimizer: false });
+     * }
      * 
-     * // operation will not be reduced and therefore four request will be sent: anthony, albert, anthony, albert
+     * // operation will not be reduced and therefore 1000 network calls will be made
      * 
-     * unminimizedUser.forEach(e=> {
-     *   mserver.collection('user').findOne({ _id: e }).get();
-     * });
+     * for (let i = 0; i < 1000; i++) {
+     *     mserver.collection('user').findOne({ company: 'brainbehindx' }).get({ disableMinimizer: true });
+     * }
      * ```
      * defaults to false
      * 
@@ -352,8 +360,13 @@ interface GetConfigExtraction {
     sort: string;
     direction?: 'desc' | 'asc' | 1 | -1
     collection: string;
-    find?: DocumentFind;
-    findOne?: DocumentFind
+    find?: DocumentFind | DynamicValueExtraction<{ $dynamicValue: string }>;
+    findOne?: DocumentFind | DynamicValueExtraction<{ $dynamicValue: string }>;
+    returnOnly: string | string[]
+}
+
+interface DynamicValueExtraction<T> {
+    [key: string]: T
 }
 
 interface DocumentFind {
@@ -372,6 +385,7 @@ interface DocumentFind {
 }
 
 declare interface Document {
+    _id: any;
     [key: string]: any;
 }
 

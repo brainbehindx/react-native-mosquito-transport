@@ -88,7 +88,6 @@ class MosquitodbUploadTask: NSObject, URLSessionDataDelegate {
         let filepath = options["file"] as! String
         let url = options["url"] as! String
         let destination = options["destination"] as! String
-        let authorization = options["authorization"] as! String
         
         do {
             let rawData = try Data(contentsOf: URL(fileURLWithPath: filepath))
@@ -102,7 +101,6 @@ class MosquitodbUploadTask: NSObject, URLSessionDataDelegate {
                 }
             }
             request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.setValue(authorization, forHTTPHeaderField: "Authorization")
             if options["authToken"] != nil {
                 request.setValue(options["authToken"] as? String, forHTTPHeaderField: "Mosquito-Token")
             }
@@ -190,7 +188,6 @@ class MosquitodbDownloadTask: NSObject, URLSessionDownloadDelegate {
     func downloadFile(options: [String: Any], completion: @escaping ([Any]?)->()) -> Void {
         let processID = options["processID"] as! String
         let url = options["url"] as! String
-        let authorization = options["authorization"] as! String
         
         var request = URLRequest(url: URL(string: url)!)
         request.httpMethod = "POST"
@@ -200,7 +197,6 @@ class MosquitodbDownloadTask: NSObject, URLSessionDownloadDelegate {
                 request.setValue(value, forHTTPHeaderField: key)
             }
         }
-        request.setValue(authorization, forHTTPHeaderField: "Authorization")
         if options["authToken"] != nil {
             request.setValue(options["authToken"] as? String, forHTTPHeaderField: "Mosquito-Token")
         }

@@ -7,3 +7,14 @@
 - `provide functionality to add extra header to MT instance (all outgoing request)`
 - borrowToken
 - `add sqlite`
+- minimize extraction data ✅
+- change `collection().onDisconnect()` to `collection().socket().onDisconnect()` and `collection().socket().onConnect()` ✅
+- add `_foreign_doc` to d.ts ✅
+- tree shake dependencies
+- dynamic import for fs ✅
+- new URL() work around ✅
+- fetchHttp, default retrieval if has body ✅
+- hashing
+- TextEncoder
+- lodashes
+<!-- - error: "refreshToken retry limit exceeded" <--- no need -->

@@ -1,8 +1,8 @@
 import EngineApi from "../../helpers/engine_api";
-import { encodeBinary, prefixStoragePath } from "../../helpers/peripherals";
+import { deserializeE2E, prefixStoragePath } from "../../helpers/peripherals";
 import { Scoped } from "../../helpers/variables";
 import { DeviceEventEmitter, NativeEventEmitter, NativeModules, Platform } from 'react-native';
-import { awaitReachableServer, buildFetchInterface } from "../../helpers/utils";
+import { awaitReachableServer, buildFetchInterface, buildFetchResult } from "../../helpers/utils";
 import { awaitRefreshToken } from "../auth/accessor";
 import { simplifyError } from "simplify-error";
 
@@ -31,7 +31,7 @@ export class MTStorage {
         const { awaitServer } = options || {};
         let hasFinished, isPaused, hasCancelled;
 
-        const { projectUrl, accessKey, extraHeaders } = this.builder;
+        const { projectUrl, extraHeaders } = this.builder;
 
         if (destination && (typeof destination !== 'string' || !destination.trim())) {
             onComplete?.({ error: 'destination_invalid', message: 'destination must be a non-empty string' });
@@ -98,7 +98,6 @@ export class MTStorage {
                 } : {},
                 processID,
                 urlName: link.split('/').pop(),
-                authorization: `Bearer ${encodeBinary(accessKey)}`,
                 extraHeaders: extraHeaders || {},
             });
         }
@@ -136,7 +135,7 @@ export class MTStorage {
 
         file = isAsset ? file.trim() : prefixStoragePath(file.trim());
 
-        const { projectUrl, accessKey, uglify, extraHeaders } = this.builder;
+        const { projectUrl, uglify, extraHeaders } = this.builder;
         const processID = `${++Scoped.StorageProcessID}`;
 
         const init = async () => {
@@ -171,7 +170,6 @@ export class MTStorage {
                 createHash: createHash ? 'yes' : 'no',
                 destination,
                 processID,
-                authorization: `Bearer ${encodeBinary(accessKey)}`,
                 extraHeaders: extraHeaders || {}
             });
         }
@@ -192,16 +190,25 @@ export class MTStorage {
     deleteFolder = (path) => deleteContent(this.builder, path, true);
 }
 
+const { _deleteFile, _deleteFolder } = EngineApi;
+
 const deleteContent = async (builder, path, isFolder) => {
-    const { projectUrl, accessKey, uglify } = builder;
+    const { projectUrl, uglify, extraHeaders, serverE2E_PublicKey } = builder;
 
     try {
-        const r = await (await fetch(
-            EngineApi[isFolder ? '_deleteFolder' : '_deleteFile'](projectUrl, uglify),
-            await buildFetchInterface({ path }, accessKey, Scoped.AuthJWTToken[projectUrl], 'DELETE')
-        )).json();
-        if (r.simpleError) throw r;
-        if (r.status !== 'success') throw 'operation not successful';
+        const [reqBuilder, [privateKey]] = await buildFetchInterface({
+            method: 'DELETE',
+            authToken: Scoped.AuthJWTToken[projectUrl],
+            body: { path },
+            extraHeaders,
+            serverE2E_PublicKey,
+            uglify
+        });
+
+        const data = await buildFetchResult(await fetch((isFolder ? _deleteFolder : _deleteFile)(projectUrl, uglify), reqBuilder), uglify);
+        const result = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
+
+        if (result.status !== 'success') throw 'operation not successful';
     } catch (e) {
         if (e?.simpleError) throw e.simpleError;
         throw simplifyError('unexpected_error', `${e}`).simpleError;

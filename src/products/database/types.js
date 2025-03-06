@@ -1,5 +1,6 @@
 
 export const TIMESTAMP = { $timestamp: "now" };
+export const TIMESTAMP_OFFSET = (v) => ({ $timestamp_offset: v });
 
 export const IS_TIMESTAMP = (t) => t && (typeof t.$timestamp === 'number' || t.$timestamp === 'now') && Object.keys(t).length === 1;
 

@@ -1,4 +1,4 @@
-import cloneDeep from "lodash.clonedeep";
+import cloneDeep from "lodash/cloneDeep";
 import { doSignOut, revokeAuthIntance } from ".";
 import EngineApi from "../../helpers/engine_api";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
@@ -118,7 +118,7 @@ export const getEmulatedLinks = (projectUrl) => Object.entries(CacheStore.Emulat
     .map(v => v[0]);
 
 const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7, isForceRefresh) => new Promise(async (resolve, reject) => {
-    const { projectUrl, serverE2E_PublicKey, accessKey, uglify, extraHeaders } = builder;
+    const { projectUrl, serverE2E_PublicKey, uglify, extraHeaders } = builder;
     const lostProcess = simplifyError('process_lost', 'The token refresh process has been lost and replaced with another one');
 
     try {
@@ -126,7 +126,6 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
 
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { token, r_token },
-            accessKey,
             uglify,
             serverE2E_PublicKey,
             extraHeaders

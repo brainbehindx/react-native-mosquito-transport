@@ -2,11 +2,11 @@ import { niceHash, shuffleArray, sortArrayByObjectKey } from "../../helpers/peri
 import { awaitStore, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { assignExtractionFind, CompareBson, confirmFilterDoc, defaultBSON, downcastBSON, validateCollectionName, validateFilter } from "./validator";
-import getLodash from 'lodash.get';
-import setLodash from 'lodash.set';
-import unsetLodash from 'lodash.unset';
+import getLodash from 'lodash/get';
+import setLodash from 'lodash/set';
+import unsetLodash from 'lodash/unset';
 import { DatabaseRecordsListener } from "../../helpers/listeners";
-import cloneDeep from "lodash.clonedeep";
+import cloneDeep from "lodash/cloneDeep";
 import { BSONRegExp, ObjectId, Timestamp } from "bson";
 import { niceGuard, Validator } from "guard-object";
 import { TIMESTAMP } from "../..";

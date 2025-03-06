@@ -1,12 +1,7 @@
 import { encodeBinary } from './peripherals';
 
-const EngineApiBase = (baseApi, ugly, path) => {
-    const url = new URL(baseApi);
-    if (ugly) {
-        url.pathname = `/e2e/${encodeBinary(path)}`;
-    } else url.pathname = path;
-    return url.href;
-};
+const EngineApiBase = (baseApi, ugly, path) =>
+    ugly ? `${baseApi}/e2e/${encodeBinary(path)}` : `${baseApi}/${path}`;
 
 const apis = {
     _readDocument: (baseApi, ugly) => EngineApiBase(baseApi, ugly, '_readDocument'),

@@ -8,11 +8,11 @@ import { addPendingWrites, generateRecordID, getRecord, insertRecord, listenQuer
 import { validateCollectionName, validateFilter, validateFindConfig, validateFindObject, validateListenFindConfig } from "./validator";
 import { awaitRefreshToken, listenToken } from "../auth/accessor";
 import { DELIVERY, RETRIEVAL } from "../../helpers/values";
-import setLodash from 'lodash.set';
+import setLodash from 'lodash/set';
 import { ObjectId } from "bson";
 import { guardObject, Validator } from "guard-object";
 import { simplifyCaughtError } from "simplify-error";
-import cloneDeep from "lodash.clonedeep";
+import cloneDeep from "lodash/cloneDeep";
 import { deserializeBSON, serializeToBase64 } from "./bson";
 
 export class MTCollection {
@@ -67,19 +67,6 @@ export class MTCollection {
         get: (config) => findObject({ ...this.builder, command: { findOne } }, config)
     });
 
-    onDisconnect = () => ({
-        setOne: (value) => initOnDisconnectionTask({ ...this.builder }, value, 'setOne'),
-        setMany: (value) => initOnDisconnectionTask({ ...this.builder }, value, 'setMany'),
-        updateOne: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'updateOne'),
-        updateMany: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'updateMany'),
-        mergeOne: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'mergeOne'),
-        mergeMany: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'mergeMany'),
-        deleteOne: (find = {}) => initOnDisconnectionTask({ ...this.builder, command: { find } }, undefined, 'deleteOne'),
-        deleteMany: (find = {}) => initOnDisconnectionTask({ ...this.builder, command: { find } }, undefined, 'deleteMany'),
-        replaceOne: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'replaceOne'),
-        putOne: (find = {}, value) => initOnDisconnectionTask({ ...this.builder, command: { find } }, value, 'putOne')
-    });
-
     setOne = (value, config) => commitData(this.builder, value, 'setOne', config);
 
     setMany = (value, config) => commitData(this.builder, value, 'setMany', config);
@@ -115,6 +102,26 @@ export class MTCollection {
     deleteMany = (find = {}, config) => commitData({ ...this.builder, find }, undefined, 'deleteMany', config);
 };
 
+export const onCollectionConnect = (builder) => ({
+    ...collectionIO(data => ({
+        ...initCollectionIO({ connectData: data, builder }),
+        onDisconnect: () => collectionIO(data2 =>
+            initCollectionIO({ connectData: data, disconnectData: data2, builder })
+        )
+    })),
+    onDisconnect: () => collectionIO(data =>
+        initCollectionIO({ disconnectData: data, builder })
+    )
+});
+
+const collectionIO = (caller) => ({
+    batchWrite: (map, config) => caller({ value: map, config })
+});
+
+const initCollectionIO = (data) => ({
+    start: () => initOnDisconnectionTask(data)
+});
+
 export const batchWrite = (builder, map, config) => commitData({ ...builder }, map, 'batchWrite', config);
 
 const {
@@ -130,7 +137,7 @@ const {
 } = EngineApi;
 
 const listenDocument = (callback, onError, builder, config) => {
-    const { projectUrl, wsPrefix, serverE2E_PublicKey, baseUrl, dbUrl, dbName, accessKey, path, disableCache, command, uglify, extraHeaders, castBSON } = builder;
+    const { projectUrl, wsPrefix, serverE2E_PublicKey, baseUrl, dbUrl, dbName, path, disableCache, command, uglify, extraHeaders, castBSON } = builder;
     const { find, findOne, sort, direction, limit } = command;
     const { disableAuth } = config || {};
     const shouldCache = !disableCache;
@@ -145,7 +152,6 @@ const listenDocument = (callback, onError, builder, config) => {
         hasRespond,
         cacheListener,
         socket,
-        wasDisconnected,
         lastToken = Scoped.AuthJWTToken[projectUrl] || null,
         lastInitRef = 0,
         connectedListener,
@@ -197,20 +203,22 @@ const listenDocument = (callback, onError, builder, config) => {
             dbUrl
         };
 
-        const [encPlate, [privateKey]] = uglify ? await serializeE2E({ accessKey, _body: authObj }, mtoken, serverE2E_PublicKey) : ['', []];
+        const [encPlate, [privateKey]] = uglify ? await serializeE2E({ _body: authObj }, mtoken, serverE2E_PublicKey) : ['', []];
 
         socket = io(`${wsPrefix}://${baseUrl}`, {
             transports: ['websocket', 'polling', 'flashsocket'],
             extraHeaders,
-            auth: uglify ? { e2e: encPlate.toString('base64'), _m_internal: true } : {
-                accessKey,
-                _body: authObj,
-                ...mtoken ? { mtoken } : {},
-                _m_internal: true
+            auth: {
+                ...uglify ? { e2e: encPlate.toString('base64') } : {
+                    _body: authObj,
+                    ...mtoken ? { mtoken } : {},
+                    _m_internal: true
+                },
+                _m_internal: true,
+                _m_route: (findOne ? _listenDocument : _listenCollection)(uglify)
             }
         });
 
-        socket.emit((findOne ? _listenDocument : _listenCollection)(uglify));
         socket.on('mSnapshot', async ([err, snapshot]) => {
             hasRespond = true;
             if (err) {
@@ -219,19 +227,11 @@ const listenDocument = (callback, onError, builder, config) => {
                 } else console.error('unhandled listen for:', { path, find }, ' error:', err);
             } else {
                 if (uglify) snapshot = await deserializeE2E(snapshot, serverE2E_PublicKey, privateKey);
-                snapshot = deserializeBSON(snapshot)._;
+                snapshot = hydrateForeignDoc(deserializeBSON(snapshot)._);
                 dispatchSnapshot(snapshot);
 
                 if (shouldCache) insertRecord(builder, config, await accessId, snapshot);
             }
-        });
-
-        socket.on('connect', () => {
-            if (wasDisconnected) socket.emit((findOne ? _listenDocument : _listenCollection)(uglify));
-        });
-
-        socket.on('disconnect', () => {
-            wasDisconnected = true;
         });
     };
 
@@ -240,7 +240,7 @@ const listenDocument = (callback, onError, builder, config) => {
     const tokenListener = listenToken(t => {
         if ((t || null) !== lastToken) {
             socket?.close?.();
-            wasDisconnected = undefined;
+            socket = undefined;
             init();
         }
         lastToken = t;
@@ -256,17 +256,30 @@ const listenDocument = (callback, onError, builder, config) => {
     }
 };
 
-const initOnDisconnectionTask = (builder, value, type) => {
-    const { projectUrl, wsPrefix, baseUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, path, extraHeaders, command, uglify } = builder;
-    const { find } = command || {};
+const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
+    const { projectUrl, wsPrefix, baseUrl, serverE2E_PublicKey, dbUrl, dbName, extraHeaders, uglify } = builder;
     const disableAuth = false;
 
-    validateCollectionName(path);
-    validateWriteValue({ type, find, value });
+    [connectData, disconnectData].forEach((e) => {
+        if (e) {
+            if (e.config !== undefined)
+                guardObject({
+                    stepping: t => t === undefined || Validator.BOOLEAN(t)
+                }).validate(e.config);
+
+            cleanBatchWrite(e.value).forEach(e => {
+                const { scope, find, value, path } = e;
+                validateCollectionName(path);
+                validateWriteValue({ find, value, type: scope });
+            });
+        }
+    });
 
     let hasCancelled,
+        /**
+         * @type {import('socket.io-client').Socket}
+         */
         socket,
-        wasDisconnected,
         lastToken = Scoped.AuthJWTToken[projectUrl] || null,
         lastInitRef = 0;
 
@@ -276,13 +289,16 @@ const initOnDisconnectionTask = (builder, value, type) => {
         if (hasCancelled || processID !== lastInitRef) return;
 
         const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
+        const makeObj = (d) => ({
+            ...d?.config,
+            value: serializeToBase64({ _: cleanBatchWrite(d.value) })
+        });
+
         const authObj = {
-            commands: stripUndefined({
-                path,
-                find: find && serializeToBase64(find),
-                value: value && serializeToBase64({ _: value }),
-                scope: type
-            }),
+            commands: {
+                ...connectData ? { connectTask: makeObj(connectData) } : {},
+                ...disconnectData ? { disconnectTask: makeObj(disconnectData) } : {}
+            },
             dbName,
             dbUrl
         };
@@ -290,54 +306,47 @@ const initOnDisconnectionTask = (builder, value, type) => {
         socket = io(`${wsPrefix}://${baseUrl}`, {
             transports: ['websocket', 'polling', 'flashsocket'],
             extraHeaders,
-            auth: uglify ? {
-                e2e: (await serializeE2E({ accessKey, _body: authObj }, mtoken, serverE2E_PublicKey))[0].toString('base64'),
-                _m_internal: true
-            } : {
-                ...mtoken ? { mtoken } : {},
-                accessKey,
-                _body: authObj,
-                _m_internal: true
+            auth: {
+                ...uglify ? {
+                    e2e: (await serializeE2E({ _body: authObj }, mtoken, serverE2E_PublicKey))[0].toString('base64')
+                } : {
+                    ...mtoken ? { mtoken } : {},
+                    _body: authObj
+                },
+                _m_internal: true,
+                _m_route: _startDisconnectWriteTask(uglify)
             }
-        });
-        socket.emit(_startDisconnectWriteTask(uglify));
-
-        socket.on('connect', () => {
-            if (wasDisconnected) socket.emit(_startDisconnectWriteTask(uglify));
-        });
-
-        socket.on('disconnect', () => {
-            wasDisconnected = true;
         });
     };
 
     init();
 
-    const tokenListener = listenToken(async t => {
+    const tokenListener = disableAuth ? undefined : listenToken(async t => {
         if ((t || null) !== lastToken) {
             if (socket) {
-                await niceTry(() => socket.timeout(7000).emitWithAck(_cancelDisconnectWriteTask(uglify)));
                 socket.close();
-            }
-            wasDisconnected = undefined;
-            init();
+                socket = undefined;
+                setTimeout(init, 500);
+            } else init();
         }
         lastToken = t;
     }, projectUrl);
 
     return () => {
         if (hasCancelled) return;
-        tokenListener();
-        if (socket)
-            niceTry(() => socket.timeout(7000).emitWithAck(_cancelDisconnectWriteTask(uglify))).then(() => {
-                socket.close();
-            });
         hasCancelled = true;
+        tokenListener?.();
+        if (socket) {
+            const thisSocket = socket;
+            return niceTry(() => thisSocket.timeout(5000).emitWithAck(_cancelDisconnectWriteTask(uglify))).finally(() => {
+                thisSocket.close();
+            });
+        }
     };
 };
 
 const countCollection = async (builder, config) => {
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, uglify, extraHeaders, path, disableCache, command = {} } = builder;
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 7, uglify, extraHeaders, path, disableCache, command = {} } = builder;
     const { find } = command;
     const { disableAuth } = config || {};
     const accessId = await generateRecordID({ ...builder, countDoc: true }, config);
@@ -371,7 +380,6 @@ const countCollection = async (builder, config) => {
                     dbName,
                     dbUrl
                 },
-                accessKey,
                 ...disableAuth ? {} : { authToken: Scoped.AuthJWTToken[projectUrl] },
                 serverE2E_PublicKey,
                 uglify,
@@ -424,13 +432,26 @@ const stripUndefined = o => Object.fromEntries(
     Object.entries(o).filter(v => v[1] !== undefined)
 );
 
+const hydrateForeignDoc = ({ data, doc_holder }) => {
+    const isList = Array.isArray(data);
+    const filled = (isList ? data : [data]).map(v => {
+        if (v?._foreign_doc) {
+            v._foreign_doc = Array.isArray(v._foreign_doc)
+                ? v._foreign_doc.map(k => doc_holder[k])
+                : doc_holder[k];
+        }
+        return v;
+    });
+    return isList ? filled : filled[0];
+}
+
 const transformBSON = (d, castBSON) => {
     if (castBSON) return d && deserializeBSON(serializeToBase64({ _: d }), true)._;
     return cloneDeep(d);
 };
 
 const findObject = async (builder, config) => {
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, disableCache, uglify, extraHeaders, command, castBSON } = builder;
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 7, path, disableCache, uglify, extraHeaders, command, castBSON } = builder;
     const { find, findOne, sort, direction, limit, random } = command;
     const { retrieval = RETRIEVAL.DEFAULT, episode = 0, disableAuth, disableMinimizer } = config || {};
     const enableMinimizer = !disableMinimizer;
@@ -515,7 +536,6 @@ const findObject = async (builder, config) => {
                     dbName,
                     dbUrl
                 },
-                accessKey,
                 authToken: disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
                 serverE2E_PublicKey,
                 uglify,
@@ -524,7 +544,9 @@ const findObject = async (builder, config) => {
 
             const data = await buildFetchResult(await fetch((findOne ? _readDocument : _queryCollection)(projectUrl, uglify), reqBuilder), uglify);
 
-            const result = deserializeBSON((uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data).result)._;
+            const result = hydrateForeignDoc(
+                deserializeBSON((uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data).result)._
+            );
 
             if (shouldCache) insertRecord(builder, config, accessId, result);
             finalize({ liveResult: result || null });
@@ -572,6 +594,17 @@ const transformNullRecursively = obj => Object.fromEntries(
     )
 );
 
+const cleanBatchWrite = (value) => cloneDeep(value).map(v => {
+    if (Validator.OBJECT(v?.value)) {
+        v.value = transformNullRecursively(v.value);
+    } else if (Array.isArray(v?.value)) {
+        v.value = v.value.map(e =>
+            Validator.OBJECT(e) ? transformNullRecursively(e) : e
+        );
+    }
+    return v;
+});
+
 const commitData = async (builder, value, type, config) => {
     // transform undefined
     if (Validator.OBJECT(value)) {
@@ -579,21 +612,12 @@ const commitData = async (builder, value, type, config) => {
     } else if (type === 'batchWrite' && Array.isArray(value)) {
         value = deserializeBSON(
             serializeToBase64({
-                _: value.map(v => {
-                    if (Validator.OBJECT(v?.value)) {
-                        v.value = transformNullRecursively(v.value);
-                    } else if (Array.isArray(v?.value)) {
-                        v.value = v.value.map(e =>
-                            Validator.OBJECT(e) ? transformNullRecursively(e) : e
-                        );
-                    }
-                    return v;
-                })
+                _: cleanBatchWrite(value)
             })
         )._;
     }
 
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, accessKey, maxRetries = 7, path, find, disableCache, uglify, extraHeaders } = builder;
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 7, path, find, disableCache, uglify, extraHeaders } = builder;
     const { disableAuth, delivery = DELIVERY.DEFAULT, stepping } = config || {};
     const writeId = `${Date.now() + ++Scoped.PendingIte}`;
     const isBatchWrite = type === 'batchWrite';
@@ -651,7 +675,6 @@ const commitData = async (builder, value, type, config) => {
                     dbName,
                     dbUrl
                 },
-                accessKey,
                 serverE2E_PublicKey,
                 authToken: disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
                 uglify,
