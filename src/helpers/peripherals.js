@@ -1,12 +1,10 @@
 import { Buffer } from "buffer";
 import { ServerReachableListener } from "./listeners";
-import aes_pkg from 'crypto-js/aes.js';
-import Utf8Encoder from 'crypto-js/enc-utf8.js';
 import naclPkg from 'tweetnacl';
 import getLodash from "lodash/get";
 import { deserialize, serialize } from "entity-serializer";
+import { CONSTANTS, JSHash } from 'react-native-hash';
 
-const { encrypt, decrypt } = aes_pkg;
 const { box, randomBytes } = naclPkg;
 
 export const listenReachableServer = (callback, projectUrl) => {
@@ -42,7 +40,7 @@ export const normalizeRoute = (route = '') => route.split('').map((v, i, a) =>
 ).join('');
 
 export const shuffleArray = (n) => {
-    const array = [...n];
+    const array = n.slice(0);
     let currentIndex = array.length, randomIndex;
 
     while (currentIndex != 0) {
@@ -66,24 +64,10 @@ export function sortArrayByObjectKey(arr = [], key) {
     });
 };
 
-export async function niceHash(str) {
-    try {
-        // Convert the string to a Uint8Array
-        const encoder = new TextEncoder();
-        const data = encoder.encode(str);
-
-        // Use the Web Crypto API to compute the hash
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-
-        // Convert the ArrayBuffer to a hex string for readability
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashHex = hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
-
-        // Convert to base64
-        return Buffer.from(hashHex, 'hex').toString('base64');
-    } catch (_) {
-        return str;
-    }
+export async function niceHash(str = '') {
+    const hash = await JSHash(str, CONSTANTS.HashAlgorithms.md5);
+    if (hash.length > str.length) return encodeBinary(str);
+    return hash;
 };
 
 export const sameInstance = (var1, var2) => {
@@ -93,14 +77,6 @@ export const sameInstance = (var1, var2) => {
     } catch (_) {
         return false;
     }
-};
-
-export const encryptString = (txt, password, iv) => {
-    return encrypt(txt, `${password || ''}${iv || ''}`).toString();
-};
-
-export const decryptString = (txt, password, iv) => {
-    return decrypt(txt, `${password || ''}${iv || ''}`).toString(Utf8Encoder);
 };
 
 export const serializeE2E = async (data, auth_token, serverPublicKey) => {

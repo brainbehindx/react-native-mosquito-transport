@@ -20,10 +20,10 @@ export const injectFreshToken = async (config, { token, refreshToken }) => {
     await awaitStore();
     CacheStore.AuthStore[projectUrl] = { token, refreshToken };
     Scoped.AuthJWTToken[projectUrl] = token;
-    if (projectUrl in CacheStore.EmulatedAuth)
-        delete CacheStore.EmulatedAuth[projectUrl];
+    const isEmulated = projectUrl in CacheStore.EmulatedAuth;
+    if (isEmulated) delete CacheStore.EmulatedAuth[projectUrl];
 
-    updateCacheStore(0);
+    updateCacheStore(0, ['AuthStore', isEmulated ? 'EmulatedAuth' : ''].filter(v => v));
 
     triggerAuthToken(projectUrl);
     initTokenRefresher(config);
@@ -47,7 +47,7 @@ export const injectEmulatedAuth = async (config, emulatedURL) => {
     Scoped.AuthJWTToken[projectUrl] = token;
     CacheStore.EmulatedAuth[projectUrl] = emulatedURL;
 
-    updateCacheStore(0);
+    updateCacheStore(0, ['AuthStore', 'EmulatedAuth']);
     triggerAuthToken(projectUrl);
     initTokenRefresher(config);
 };
@@ -90,7 +90,7 @@ export const initTokenRefresher = async (config, forceRefresh) => {
     if (token) {
         const expireOn = (tokenInfo.exp * 1000) - 60000;
         const hasExpire = getPrefferTime() >= expireOn;
-        const rizz = () => refreshToken(config, ++Scoped.LastTokenRefreshRef[projectUrl], maxRetries, maxRetries, forceRefresh);
+        const rizz = () => refreshToken(config, ++Scoped.LastTokenRefreshRef[projectUrl], maxRetries, forceRefresh);
 
         if (hasExpire || forceRefresh) {
             notifyAuthReady();
@@ -117,7 +117,7 @@ export const getEmulatedLinks = (projectUrl) => Object.entries(CacheStore.Emulat
     .filter(([_, v]) => v === projectUrl)
     .map(v => v[0]);
 
-const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7, isForceRefresh) => new Promise(async (resolve, reject) => {
+const refreshToken = (builder, processRef, remainRetries = 1, isForceRefresh) => new Promise(async (resolve, reject) => {
     const { projectUrl, serverE2E_PublicKey, uglify, extraHeaders } = builder;
     const lostProcess = simplifyError('process_lost', 'The token refresh process has been lost and replaced with another one');
 
@@ -161,7 +161,7 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
                 triggerAuthToken(v, isInit);
                 if (isForceRefresh) Scoped.InitiatedForcedToken[v] = true;
             });
-            updateCacheStore();
+            updateCacheStore(0, ['AuthStore']);
             initTokenRefresher(builder);
         } else reject(lostProcess.simpleError);
     } catch (e) {
@@ -183,7 +183,7 @@ const refreshToken = (builder, processRef, remainRetries = 7, initialRetries = 7
                     l();
                 } else if (c) {
                     l();
-                    refreshToken(builder, processRef, remainRetries - 1, initialRetries, isForceRefresh).then(resolve, reject);
+                    refreshToken(builder, processRef, remainRetries - 1, isForceRefresh).then(resolve, reject);
                 }
             }, projectUrl);
         }

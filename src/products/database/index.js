@@ -4,11 +4,10 @@ import { DatabaseRecordsListener } from "../../helpers/listeners";
 import { deserializeE2E, listenReachableServer, niceTry, serializeE2E } from "../../helpers/peripherals";
 import { awaitStore, buildFetchInterface, buildFetchResult, getReachableServer } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
-import { addPendingWrites, generateRecordID, getRecord, insertRecord, listenQueryEntry, removePendingWrite, validateWriteValue } from "./accessor";
+import { addPendingWrites, generateRecordID, getCountQuery, getRecord, insertCountQuery, insertRecord, listenQueryEntry, removePendingWrite, validateWriteValue } from "./accessor";
 import { validateCollectionName, validateFilter, validateFindConfig, validateFindObject, validateListenFindConfig } from "./validator";
 import { awaitRefreshToken, listenToken } from "../auth/accessor";
 import { DELIVERY, RETRIEVAL } from "../../helpers/values";
-import setLodash from 'lodash/set';
 import { ObjectId } from "bson";
 import { guardObject, Validator } from "guard-object";
 import { simplifyCaughtError } from "simplify-error";
@@ -139,7 +138,7 @@ const {
 const listenDocument = (callback, onError, builder, config) => {
     const { projectUrl, wsPrefix, serverE2E_PublicKey, baseUrl, dbUrl, dbName, path, disableCache, command, uglify, extraHeaders, castBSON } = builder;
     const { find, findOne, sort, direction, limit } = command;
-    const { disableAuth } = config || {};
+    const { disableAuth, episode } = config || {};
     const shouldCache = !disableCache;
     const processId = `${++Scoped.AnyProcessIte}`;
     let accessId;
@@ -165,7 +164,7 @@ const listenDocument = (callback, onError, builder, config) => {
     };
 
     if (shouldCache) {
-        accessId = generateRecordID(builder, config).then(hash => {
+        accessId = generateRecordID(builder, config, true).then(hash => {
             if (hasCancelled) return hash;
             cacheListener = listenQueryEntry(snapshot => {
                 if (!Scoped.IS_CONNECTED[projectUrl]) dispatchSnapshot(snapshot);
@@ -199,8 +198,8 @@ const listenDocument = (callback, onError, builder, config) => {
                 direction,
                 limit
             }),
-            dbName,
-            dbUrl
+            ...dbName ? { dbName } : undefined,
+            ...dbUrl ? { dbUrl } : undefined
         };
 
         const [encPlate, [privateKey]] = uglify ? await serializeE2E({ _body: authObj }, mtoken, serverE2E_PublicKey) : ['', []];
@@ -211,8 +210,7 @@ const listenDocument = (callback, onError, builder, config) => {
             auth: {
                 ...uglify ? { e2e: encPlate.toString('base64') } : {
                     _body: authObj,
-                    ...mtoken ? { mtoken } : {},
-                    _m_internal: true
+                    ...mtoken ? { mtoken } : {}
                 },
                 _m_internal: true,
                 _m_route: (findOne ? _listenDocument : _listenCollection)(uglify)
@@ -230,7 +228,7 @@ const listenDocument = (callback, onError, builder, config) => {
                 snapshot = hydrateForeignDoc(deserializeBSON(snapshot)._);
                 dispatchSnapshot(snapshot);
 
-                if (shouldCache) insertRecord(builder, config, await accessId, snapshot);
+                if (shouldCache) insertRecord(builder, config, await accessId, snapshot, episode);
             }
         });
     };
@@ -243,7 +241,7 @@ const listenDocument = (callback, onError, builder, config) => {
             socket = undefined;
             init();
         }
-        lastToken = t;
+        lastToken = t || null;
     }, projectUrl);
 
     return () => {
@@ -299,8 +297,8 @@ const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
                 ...connectData ? { connectTask: makeObj(connectData) } : {},
                 ...disconnectData ? { disconnectTask: makeObj(disconnectData) } : {}
             },
-            dbName,
-            dbUrl
+            ...dbName ? { dbName } : undefined,
+            ...dbUrl ? { dbUrl } : undefined
         };
 
         socket = io(`${wsPrefix}://${baseUrl}`, {
@@ -346,7 +344,7 @@ const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
 };
 
 const countCollection = async (builder, config) => {
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 7, uglify, extraHeaders, path, disableCache, command = {} } = builder;
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 1, uglify, extraHeaders, path, disableCache, command = {} } = builder;
     const { find } = command;
     const { disableAuth } = config || {};
     const accessId = await generateRecordID({ ...builder, countDoc: true }, config);
@@ -377,8 +375,8 @@ const countCollection = async (builder, config) => {
             const [reqBuilder, [privateKey]] = await buildFetchInterface({
                 body: {
                     commands: { path, find: serializeToBase64(find) },
-                    dbName,
-                    dbUrl
+                    ...dbName ? { dbName } : undefined,
+                    ...dbUrl ? { dbUrl } : undefined
                 },
                 ...disableAuth ? {} : { authToken: Scoped.AuthJWTToken[projectUrl] },
                 serverE2E_PublicKey,
@@ -390,12 +388,11 @@ const countCollection = async (builder, config) => {
 
             const f = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
-            if (!disableCache)
-                setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl, dbName, accessId], f.result);
-
             finalize(f.result);
+
+            if (!disableCache) insertCountQuery(builder, accessId, f.result);
         } catch (e) {
-            const b4Data = setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl, dbName, accessId]);
+            const b4Data = await getCountQuery(builder, accessId).catch(() => null);
 
             if (e?.simpleError) {
                 finalize(undefined, e.simpleError);
@@ -451,20 +448,21 @@ const transformBSON = (d, castBSON) => {
 };
 
 const findObject = async (builder, config) => {
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 7, path, disableCache, uglify, extraHeaders, command, castBSON } = builder;
-    const { find, findOne, sort, direction, limit, random } = command;
-    const { retrieval = RETRIEVAL.DEFAULT, episode = 0, disableAuth, disableMinimizer } = config || {};
-    const enableMinimizer = !disableMinimizer;
-    const accessId = await generateRecordID(builder, config);
-    const processAccessId = `${accessId}${projectUrl}${dbUrl}${dbName}${retrieval}`;
-    const getRecordData = () => getRecord(builder, config, accessId);
-    const shouldCache = (retrieval !== RETRIEVAL.DEFAULT || !disableCache) &&
-        ![RETRIEVAL.NO_CACHE_NO_AWAIT, RETRIEVAL.NO_CACHE_AWAIT].includes(retrieval);
-
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 1, path, disableCache = false, uglify, extraHeaders, command, castBSON } = builder;
     const pureConfig = stripRequestConfig(config);
     validateFindObject(command);
     validateFindConfig(config);
     validateCollectionName(path);
+
+    const { find, findOne, sort, direction, limit, random } = command;
+    const { retrieval = RETRIEVAL.DEFAULT, episode = 0, disableAuth, disableMinimizer } = config || {};
+    const enableMinimizer = !disableMinimizer;
+    const accessId = await generateRecordID(builder, config, true);
+    const processAccessId = `${accessId}_${limit}_${episode}_${projectUrl}_${dbUrl}_${dbName}_${retrieval}_${disableCache}`;
+    const getRecordData = () => getRecord(builder, accessId, episode);
+    const shouldCache = (retrieval !== RETRIEVAL.DEFAULT || !disableCache) &&
+        ![RETRIEVAL.NO_CACHE_NO_AWAIT, RETRIEVAL.NO_CACHE_AWAIT].includes(retrieval);
+
     await awaitStore();
 
     let retries = 0, hasFinalize;
@@ -474,10 +472,7 @@ const findObject = async (builder, config) => {
             instantProcess = retryProcess === 1;
 
         const finalize = (a, b) => {
-            const res = (instantProcess && a) ?
-                (a.liveResult || a.liveResult === null) ?
-                    transformBSON(a.liveResult || undefined, castBSON) :
-                    transformBSON(a.episode[episode], castBSON) : a;
+            const res = (instantProcess && a) ? transformBSON(a[0] || undefined, castBSON) : a;
 
             if (a) {
                 resolve(instantProcess ? cloneDeep(res) : a);
@@ -486,35 +481,33 @@ const findObject = async (builder, config) => {
             hasFinalize = true;
 
             if (enableMinimizer) {
-                (Scoped.PendingDbReadCollective.pendingResolution[processAccessId] || []).forEach(e => {
+                const resolutionList = (Scoped.PendingDbReadCollective[processAccessId] || []).slice(0);
+
+                if (Scoped.PendingDbReadCollective[processAccessId])
+                    delete Scoped.PendingDbReadCollective[processAccessId];
+
+                resolutionList.forEach(e => {
                     e(a ? { result: res } : undefined, b);
                 });
-                if (Scoped.PendingDbReadCollective.pendingResolution[processAccessId])
-                    delete Scoped.PendingDbReadCollective.pendingResolution[processAccessId];
-
-                if (Scoped.PendingDbReadCollective.pendingProcess[processAccessId])
-                    delete Scoped.PendingDbReadCollective.pendingProcess[processAccessId];
             }
         };
 
         try {
             if (instantProcess) {
                 if (enableMinimizer) {
-                    if (Scoped.PendingDbReadCollective.pendingProcess[processAccessId]) {
-                        if (!Scoped.PendingDbReadCollective.pendingResolution[processAccessId])
-                            Scoped.PendingDbReadCollective.pendingResolution[processAccessId] = [];
-
-                        Scoped.PendingDbReadCollective.pendingResolution[processAccessId].push((a, b) => {
+                    if (Scoped.PendingDbReadCollective[processAccessId]) {
+                        Scoped.PendingDbReadCollective[processAccessId].push((a, b) => {
                             if (a) resolve(cloneDeep(a.result));
                             else reject(cloneDeep(b));
                         });
                         return;
                     }
-                    Scoped.PendingDbReadCollective.pendingProcess[processAccessId] = true;
+                    Scoped.PendingDbReadCollective[processAccessId] = [];
                 }
 
-                if (retrieval.startsWith('sticky') && await getRecordData()) {
-                    finalize({ episode: await getRecordData() });
+                const staleData = await getRecordData();
+                if (retrieval.startsWith('sticky') && staleData) {
+                    finalize(staleData);
                     if (retrieval !== RETRIEVAL.STICKY_RELOAD) return;
                 }
             }
@@ -533,8 +526,8 @@ const findObject = async (builder, config) => {
                         limit,
                         random
                     }),
-                    dbName,
-                    dbUrl
+                    ...dbName ? { dbName } : undefined,
+                    ...dbUrl ? { dbUrl } : undefined
                 },
                 authToken: disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
                 serverE2E_PublicKey,
@@ -548,12 +541,12 @@ const findObject = async (builder, config) => {
                 deserializeBSON((uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data).result)._
             );
 
-            if (shouldCache) insertRecord(builder, config, accessId, result);
-            finalize({ liveResult: result || null });
+            if (shouldCache) insertRecord(builder, config, accessId, result, episode);
+            finalize([result]);
         } catch (e) {
             let thisRecord;
-            const getThisRecord = async () => thisRecord ? thisRecord.value :
-                (thisRecord = { value: await getRecordData() }).value;
+            const getThisRecord = async () => thisRecord ? thisRecord[0] :
+                (thisRecord = [await getRecordData()])[0];
 
             if (e?.simpleError) {
                 finalize(undefined, e?.simpleError);
@@ -565,10 +558,14 @@ const findObject = async (builder, config) => {
                 finalize(undefined, simplifyCaughtError(e).simpleError);
             } else if (
                 shouldCache &&
-                [RETRIEVAL.DEFAULT, RETRIEVAL.CACHE_NO_AWAIT].includes(retrieval) &&
+                [
+                    RETRIEVAL.DEFAULT,
+                    RETRIEVAL.CACHE_NO_AWAIT,
+                    RETRIEVAL.CACHE_AWAIT
+                ].includes(retrieval) &&
                 await getThisRecord()
             ) {
-                finalize({ episode: await getThisRecord() });
+                finalize(await getThisRecord());
             } else if (retries > maxRetries) {
                 finalize(undefined, { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
             } else {
@@ -585,7 +582,7 @@ const findObject = async (builder, config) => {
         }
     });
 
-    return await readValue();
+    return (await readValue());
 };
 
 const transformNullRecursively = obj => Object.fromEntries(
@@ -617,14 +614,12 @@ const commitData = async (builder, value, type, config) => {
         )._;
     }
 
-    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 7, path, find, disableCache, uglify, extraHeaders } = builder;
+    const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 1, path, find, disableCache, uglify, extraHeaders } = builder;
     const { disableAuth, delivery = DELIVERY.DEFAULT, stepping } = config || {};
     const writeId = `${Date.now() + ++Scoped.PendingIte}`;
     const isBatchWrite = type === 'batchWrite';
     const shouldCache = (delivery !== DELIVERY.DEFAULT || !disableCache) &&
-        delivery !== DELIVERY.NO_CACHE &&
-        delivery !== DELIVERY.NO_AWAIT_NO_CACHE &&
-        delivery !== DELIVERY.AWAIT_NO_CACHE;
+        ![DELIVERY.NO_CACHE_AWAIT, DELIVERY.NO_CACHE_NO_AWAIT].includes();
 
     await awaitStore();
     if (shouldCache) {
@@ -672,8 +667,8 @@ const commitData = async (builder, value, type, config) => {
                             find: find && serializeToBase64(find)
                         }
                     }),
-                    dbName,
-                    dbUrl
+                    ...dbName ? { dbName } : undefined,
+                    ...dbUrl ? { dbUrl } : undefined
                 },
                 serverE2E_PublicKey,
                 authToken: disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl],
@@ -690,27 +685,16 @@ const commitData = async (builder, value, type, config) => {
             if (e?.simpleError) {
                 console.error(`${type} error (${path}), ${e.simpleError?.message}`);
                 finalize(undefined, e?.simpleError, { removeCache: true, revertCache: true });
-            } else if (
-                [
-                    DELIVERY.NO_AWAIT,
-                    DELIVERY.CACHE_NO_AWAIT,
-                    DELIVERY.NO_AWAIT_NO_CACHE,
-                    DELIVERY.NO_CACHE
-                ].includes(delivery)
-            ) {
-                finalize(
-                    undefined,
-                    simplifyCaughtError(e).simpleError,
-                    await getReachableServer(projectUrl) ? { removeCache: true } : undefined
-                );
-            } else if (retries >= maxRetries) {
+            } else if (delivery === DELIVERY.NO_CACHE_NO_AWAIT) {
+                finalize(undefined, simplifyCaughtError(e).simpleError);
+            } else if (retries > maxRetries) {
                 finalize(
                     undefined,
                     { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` },
                     { removeCache: true, revertCache: true }
                 );
             } else {
-                if (delivery === DELIVERY.AWAIT_NO_CACHE) {
+                if (delivery === DELIVERY.NO_CACHE_AWAIT) {
                     const onlineListener = listenReachableServer(connected => {
                         if (connected) {
                             onlineListener();
@@ -726,7 +710,7 @@ const commitData = async (builder, value, type, config) => {
         }
     });
 
-    return await sendValue();
+    return (await sendValue());
 };
 
 export const trySendPendingWrite = (projectUrl) => {
@@ -736,20 +720,28 @@ export const trySendPendingWrite = (projectUrl) => {
         const sortedWrite = Object.entries(CacheStore.PendingWrites[projectUrl] || {})
             .filter(([k]) => !Scoped.OutgoingWrites[k])
             .sort((a, b) => a[1].addedOn - b[1].addedOn);
+        let resolveCounts = 0;
 
         for (const [writeId, { snapshot, builder, attempts = 1 }] of sortedWrite) {
             try {
-                await commitData(builder, snapshot.value, snapshot.type, { ...snapshot.config, delivery: DELIVERY.NO_AWAIT_NO_CACHE });
+                await commitData(builder, snapshot.value, snapshot.type, { ...snapshot.config, delivery: DELIVERY.NO_CACHE_NO_AWAIT });
                 delete CacheStore.PendingWrites[projectUrl][writeId];
+                ++resolveCounts;
             } catch (_) {
                 const { maxRetries } = builder;
                 if (!maxRetries || attempts >= maxRetries) {
                     delete CacheStore.PendingWrites[projectUrl][writeId];
+                    ++resolveCounts;
+                } else if (CacheStore.PendingWrites[projectUrl]?.[writeId]) {
+                    CacheStore.PendingWrites[projectUrl][writeId].attempts = attempts + 1;
                 }
             }
         }
         resolve();
         Scoped.dispatchingWritesPromise = undefined;
-        if (sortedWrite.length && await getReachableServer(projectUrl)) trySendPendingWrite(projectUrl);
+        if (
+            (sortedWrite.length - resolveCounts) &&
+            await getReachableServer(projectUrl)
+        ) trySendPendingWrite(projectUrl);
     });
 };

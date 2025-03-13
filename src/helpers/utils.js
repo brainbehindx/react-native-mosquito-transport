@@ -1,21 +1,31 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ServerReachableListener, StoreReadyListener } from "./listeners";
-import { CACHE_PROTOCOL, CACHE_STORAGE_PATH, DEFAULT_CACHE_PASSWORD, LOCAL_STORAGE_PATH } from "./values";
 import { CacheStore, Scoped } from "./variables";
-import { decryptString, encryptString, niceTry, serializeE2E } from "./peripherals";
+import { serializeE2E } from "./peripherals";
 import { deserializeBSON, serializeToBase64 } from "../products/database/bson";
 import { trySendPendingWrite } from "../products/database";
 import { deserialize } from "entity-serializer";
+import { openDB, SQLITE_COMMANDS, SQLITE_PATH } from "./sqlite_manager";
+import { purgeRedundantRecords } from "./purger";
 
-export const updateCacheStore = (timer = 300) => {
-    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE, io, promoteCache } = Scoped.ReleaseCacheData;
+const { FILE_NAME, TABLE_NAME } = SQLITE_PATH;
 
-    clearTimeout(Scoped.cacheStorageReducer);
-    Scoped.cacheStorageReducer = setTimeout(() => {
-        const { AuthStore, EmulatedAuth, PendingAuthPurge, DatabaseStore, PendingWrites, ...restStore } = CacheStore;
+const CacheKeys = Object.keys(CacheStore);
 
-        const txt = encryptString(
-            JSON.stringify({
+export const updateCacheStore = (timer = 300, node) => {
+    const { io, promoteCache } = Scoped.ReleaseCacheData;
+
+    const doUpdate = async () => {
+        const {
+            AuthStore,
+            EmulatedAuth,
+            PendingAuthPurge,
+            DatabaseStore,
+            PendingWrites,
+            ...restStore
+        } = CacheStore;
+
+        if (io) {
+            const txt = JSON.stringify({
                 AuthStore,
                 EmulatedAuth,
                 PendingAuthPurge,
@@ -24,51 +34,62 @@ export const updateCacheStore = (timer = 300) => {
                     PendingWrites: serializeToBase64(PendingWrites)
                 } : {},
                 ...promoteCache ? restStore : {}
-            }),
-            cachePassword,
-            cachePassword
-        );
+            });
 
-        if (io) {
-            io.output(txt);
-        } else if (cacheProtocol === CACHE_PROTOCOL.ASYNC_STORAGE) {
-            AsyncStorage.setItem(CACHE_STORAGE_PATH, txt);
-        } else if (cacheProtocol === CACHE_PROTOCOL.SQLITE) {
-            console.error('unsupported protocol "sqlite"');
+            io.output(txt, node);
         } else {
-            const fs = require('react-native-fs');
-            fs.writeFile(LOCAL_STORAGE_PATH(), txt, 'utf8');
+            // use sqlite
+            const exclusion = ['DatabaseStore', 'DatabaseCountResult', 'FetchedStore'];
+            const updationKey = (node ? Array.isArray(node) ? node : [node] : CacheKeys).filter(v => !exclusion.includes(v));
+
+            if (!updationKey.length) return;
+            const sqlite = await openDB(FILE_NAME);
+            await Promise.allSettled(
+                updationKey
+                    .map(v => [v, v === 'PendingWrites' ? serializeToBase64(CacheStore[v]) : CacheStore[v]])
+                    .map(([ref, value]) =>
+                        sqlite.executeSql(SQLITE_COMMANDS.MERGE(TABLE_NAME, ['ref', 'value']), [ref, JSON.stringify(value)])
+                    )
+            );
+            sqlite.close();
         }
-    }, timer);
+    };
+
+    clearTimeout(Scoped.cacheStorageReducer);
+    if (timer) {
+        Scoped.cacheStorageReducer = setTimeout(doUpdate, timer);
+    } else doUpdate();
 };
 
 export const releaseCacheStore = async (builder) => {
-    const { cachePassword = DEFAULT_CACHE_PASSWORD, cacheProtocol = CACHE_PROTOCOL.ASYNC_STORAGE, io } = builder;
+    const { io } = builder;
 
-    let txt;
+    let data = {};
 
-    if (io) {
-        txt = await io.input();
-    } else if (cacheProtocol === CACHE_PROTOCOL.ASYNC_STORAGE) {
-        txt = await niceTry(() => AsyncStorage.getItem(CACHE_STORAGE_PATH));
-    } else {
-        const fs = require('react-native-fs');
-        txt = await niceTry(() => fs.readFile(LOCAL_STORAGE_PATH(), 'utf8'));
+    try {
+        if (io) {
+            data = JSON.parse((await io.input()) || '{}');
+        } else {
+            const sqlite = await openDB(FILE_NAME);
+            await sqlite.executeSql(`CREATE TABLE IF NOT EXISTS ${TABLE_NAME} ( ref TEXT PRIMARY KEY, value TEXT )`).catch(() => null);
+            const [query] = await sqlite.executeSql(`SELECT * FROM ${TABLE_NAME}`);
+            data = Object.fromEntries(query.rows.raw().map(v => [v.ref, JSON.parse(v.value)]));
+            sqlite.close();
+        }
+        await purgeRedundantRecords(data, builder);
+    } catch (e) {
+        console.error('releaseCacheStore data err:', e);
     }
 
-    const j = JSON.parse(decryptString(txt || '', cachePassword, cachePassword) || '{}');
-    const projectList = new Set([]);
-
-    Object.entries(j).forEach(([k, v]) => {
+    Object.entries(data).forEach(([k, v]) => {
         if (['DatabaseStore', 'PendingWrites'].includes(k)) {
             CacheStore[k] = deserializeBSON(v);
         } else CacheStore[k] = v;
-        projectList.add(k);
     });
     Object.entries(CacheStore.AuthStore).forEach(([key, value]) => {
         Scoped.AuthJWTToken[key] = value?.token;
     });
-    projectList.forEach(projectUrl => {
+    Object.keys(CacheStore.PendingWrites).forEach(projectUrl => {
         if (Scoped.IS_CONNECTED[projectUrl])
             trySendPendingWrite(projectUrl);
     });

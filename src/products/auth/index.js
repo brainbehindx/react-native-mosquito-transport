@@ -256,7 +256,7 @@ export const doSignOut = async (builder) => {
     const emulatedURL = CacheStore.EmulatedAuth[builder.projectUrl];
 
     clearCacheForSignout(builder, !emulatedURL);
-    updateCacheStore(0);
+    updateCacheStore(0, ['AuthStore', 'EmulatedAuth']);
     if (emulatedURL) return;
     await revokeAuthIntance(builder);
 };

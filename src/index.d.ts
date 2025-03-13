@@ -9,7 +9,9 @@ interface RNMTConfig {
      */
     disableCache?: boolean;
     /**
-     * maximum numbers of attempts to retry sending a request
+     * maximum numbers of attempts to retry sending a failed request
+     * 
+     * @default 3
      */
     maxRetries?: number;
     /**
@@ -89,40 +91,45 @@ type auth_provider_id_values = auth_provider_id['GOOGLE'] |
     auth_provider_id['APPLE'];
 
 interface ReleaseCacheOption_IO {
-    /**
-     * This password will be used to encrypt data stored locally
-     */
-    cachePassword?: string;
-    io: {
-        /**
-         * feeds mosquito-transport data
-         */
-        input: () => string;
-        /**
-         * emits mosquito-transport internal data
-         */
-        output: (data: string) => void;
-    };
 }
 
 interface ReleaseCacheOption {
     /**
-     * This password will be used to encrypt data stored locally
+     * This key will be used to encrypt sqlite data stored locally
      */
-    cachePassword?: string;
+    sqliteKey?: string;
     /**
-     * select the mechanism for storing data locally
-     * - async-storage: uses [@react-native-async-storage/async-storage](https://github.com/react-native-async-storage/async-storage) for storing data, make sure you have this package installed before setting this as the value
-     * - reat-native-fs: uses [reat-native-fs](https://github.com/itinance/react-native-fs) for storing data, make sure you have this package installed before setting this as the value
+     * sqlite is used as the default caching mechanism
+     * 
+     * providing `io` means you want to override this behaviour and handle caching yourself in the system's memory
      */
-    cacheProtocol?: 'async-storage' | 'reat-native-fs';
+    io: {
+        /**
+         * you should handle retrieval of mosquito-transport data here by returning it
+         */
+        input: () => string | Promise<string>;
+        /**
+         * you should handle storage of mosquito-transport data here by caching the emitted string
+         */
+        output: (data: string) => void;
+    },
     /**
-     * the maximum database size
+     * the maximum size allocated to local database
+     * 
+     * when local database size exceed this value, redundant database documents will be purge retaining only recently used ones
+     * 
+     * @default 10485760 - 'which is 10 megabytes'
      */
-    heapMemory?: number;
+    maxLocalDatabaseSize?: number;
+    /**
+     * the maximum size allocated to local database for storing {@link RNMT.fetchHttp}
+     * 
+     * @default 10485760 - 'which is 10 megabytes'
+     */
+    maxLocalFetchHttpSize?: number;
     /**
      * true to cache database and {@link RNMT.fetchHttp} data.
-     * the value only applies to in-memory storage protocol such as `io`, `async-storage` and `reat-native-fs`
+     * the value only applies to in-memory storage protocol such as `io`
      * 
      * @default false
      */
@@ -151,14 +158,25 @@ interface BatchWriteConfig extends WriteConfig {
     stepping?: boolean;
 }
 
+interface CountConfig {
+    disableAuth?: boolean;
+}
+
+interface FetchHttpResponse extends Response {
+    /**
+     * true if this response was from local cache
+     */
+    fromCache?: boolean | undefined;
+}
+
 export default class RNMT {
     constructor(config: RNMTConfig);
-    static initializeCache(option?: ReleaseCacheOption | ReleaseCacheOption_IO): void;
+    static initializeCache(option?: ReleaseCacheOption): void;
     getDatabase(dbName?: string, dbUrl?: string): GetDatabase;
     collection(path: string): RNMTCollection;
     auth(): RNMTAuth;
     storage(): RNMTStorage;
-    fetchHttp(endpoint: string, init?: RequestInit, config?: FetchHttpConfig): Promise<Response>;
+    fetchHttp(endpoint: string, init?: RequestInit, config?: FetchHttpConfig): Promise<FetchHttpResponse>;
     listenReachableServer(callback: (reachable: boolean) => void): () => void;
     getSocket(options: { disableAuth?: boolean; authHandshake?: Object }): RNMTSocket;
     onConnect: () => CollectionIO;
@@ -169,7 +187,7 @@ interface RNMTCollection {
     find: (find?: DocumentFind) => ({
         get: (config?: GetConfig) => Promise<DocumentResult[]>;
         listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
-        count: () => Promise<number>;
+        count: (config?: CountConfig) => Promise<number>;
         limit: (limit: number) => ({
             random: (config?: GetConfig) => Promise<DocumentResult[]>;
             get: (config?: GetConfig) => Promise<DocumentResult[]>;
@@ -205,7 +223,7 @@ interface RNMTCollection {
             listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
         })
     });
-    count: () => Promise<number>;
+    count: (config?: CountConfig) => Promise<number>;
     get: (config?: GetConfig) => Promise<DocumentResult[]>;
     listen: (callback: (snapshot?: DocumentResult[]) => void, onError?: (error?: DocumentError) => void, config?: GetConfig) => void;
     findOne: (findOne?: DocumentFind) => ({
@@ -273,15 +291,21 @@ interface WriteConfig {
      */
     disableAuth?: boolean;
 
+    DEFAULT: 'default',
+    CACHE_AWAIT: 'cache-await',
+    CACHE_NO_AWAIT: 'cache-no-await',
+    NO_CACHE_NO_AWAIT: 'no-cache-no-await',
+    NO_CACHE_AWAIT: 'no-cache-await'
+
     /**
-     * This property defines how the write will be committed and sent
+     * This property determines how the write will be dispatch to the remote server
+     *  TODO:
      * 
-     * - default: 
-     * - no-cache: 
-     * - no-await: 
-     * - no-await-no-cache: 
-     * - await-no-cache: 
-     * - cache-no-await: 
+     * `default`: 
+     * `cache-await`: 
+     * `cache-no-await`: 
+     * `no-cache-no-await`: 
+     * `no-cache-await`: 
      */
     delivery?: Delievery;
 }
@@ -293,23 +317,28 @@ interface GetConfig {
     returnOnly?: string | string[];
     extraction?: GetConfigExtraction | GetConfigExtraction[];
     /**
-     * This property determines how requested data is being access and handled
+     * This property determines how requested data should be accessed and handled
      * 
-     * - default: will try getting fresh data from server if server is reachable, else we check if local data exists and return it, if no local data exist we await for client->server connectivity, then try getting the data, return it and cache it for future need. ⚠️ This respect disableCache value
+     *  `default`: will try getting fresh data from the server if the server is reachable then cache the result for future use. In scenerio where the server is unreachable, we check if local data exists and return it, if no local data exist we wait for reachable a server to complete the task.
+     * ⚠️ This respect `disableCache` value therefore if disableCache is true, no local cache read/write will be made for the request.
      * 
-     * - sticky: if local data exists for the specified query, such data is returned and no-ops afterwards. If no local data is found, we await for client->server connectivity and try to get fresh data from serve, return the data and cache it for future need. ⚠️ This does not respect disableCache value
+     *  `sticky`: if local data exists for the specified query, such data is returned and no-ops afterwards. If no local data is found, we await for client->server connectivity and try to get fresh data from serve, return the data and cache it for future need. ⚠️ This overrides `disableCache` value
      * 
-     * - sticky-no-await: if local data exists for the specified query, such data is returned and no-ops afterwards. If no local data is found, will try to get fresh data from serve, we throw an error if server is not reachable else if server returns requested data, we return such data and cache it for future need. ⚠️ This does not respect disableCache value
+     * `sticky-no-await`: if local data exists for the specified query, such data is returned and no operation is performed afterwards. If no local data is found, will try to get fresh data from serve, we throw an error if server is unreachable else if server returns requested data, we return such data and cache it for future need. ⚠️ This overrides `disableCache` value
      * 
-     * - sticky-reload: if local data exists for the specified query, such data is returned, then will try getting fresh data from the server and caching it for future need. If no local data is found, we await for client->server connectivity and try to get fresh data from serve, return the data and cache it for future need
+     * `sticky-reload`: if local data exists for the specified query, such data is returned, then will try getting fresh data from the server and caching it for future need. If no local data is found, we await for a reachable server and try to get fresh data from the serve, return the data and cache it for future need. ⚠️ This overrides `disableCache` value
      * 
-     * - cache-no-await: will try getting fresh data from server if server is reachable, else we check if local data exists and return it, if no local data exist we throw an error
+     * `cache-await`: will try getting fresh data from the server if the server is reachable then cache the result for future use. In scenerio where the server is unreachable, then we check if local data exists and return it, if no local data exist we wait for a reachable server to complete the task. ⚠️ This overrides `disableCache` value
      * 
-     * - no-cache-no-await: will try getting fresh data from server if server is reachable, else we throw an error
+     * `cache-no-await`: will try getting fresh data from the server if the server is reachable then cache the result for future use. In scenerio where the server is unreachable, then we check if local data exists and return it, if no local data exist an error is thrown instead. ⚠️ This overrides `disableCache` value
      * 
-     * - no-cache-await: will try getting fresh data from server when server is reachable and the result won't be cache
+     * `no-cache-no-await`: will try getting fresh data from the server and the result won't be cached. In scenerio where the server is unreachable, an error will be thrown. ⚠️ This overrides `disableCache` value
+     * 
+     * `no-cache-await`: will wait for a reachable server then try getting fresh data from that server and the result won't be cache. ⚠️ This overrides `disableCache` value
      * 
      * To learn and see more examples on this, Please visit https://brainbehindx.com/mosquito-transport/docs/reading_data/retrieval
+     * 
+     * @default 'default'
      */
     retrieval?: Retrieval;
     /**

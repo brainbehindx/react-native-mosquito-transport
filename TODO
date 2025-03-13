@@ -1,12 +1,12 @@
-- fix local cache query on sqlite and fs
+- fix local cache query on sqlite ✅
 - fix and add all mongodb query and update operator
 - reauthenticate
 - change `Object` in d.ts to [key: string]: any
 - add `getServerTimeOffset` method
-- change null to undefined in `value`
-- `provide functionality to add extra header to MT instance (all outgoing request)`
+- change undefined to null in `value` ✅
+- `provide functionality to add extra header to MT instance (all outgoing request)` ✅
 - borrowToken
-- `add sqlite`
+- `add sqlite` ✅
 - minimize extraction data ✅
 - change `collection().onDisconnect()` to `collection().socket().onDisconnect()` and `collection().socket().onConnect()` ✅
 - add `_foreign_doc` to d.ts ✅
@@ -14,7 +14,10 @@
 - dynamic import for fs ✅
 - new URL() work around ✅
 - fetchHttp, default retrieval if has body ✅
-- hashing
+- native hashing
 - TextEncoder
-- lodashes
+- native storage upload
+- lodashes ✅
+- switch to events package
+- serverTimeOffset
 <!-- - error: "refreshToken retry limit exceeded" <--- no need -->

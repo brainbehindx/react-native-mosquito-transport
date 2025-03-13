@@ -1,15 +1,16 @@
 import { Buffer } from "buffer";
 import { deserializeE2E, listenReachableServer, niceHash, normalizeRoute, serializeE2E } from "../../helpers/peripherals";
-import { awaitStore, getReachableServer, updateCacheStore } from "../../helpers/utils";
+import { awaitStore, getReachableServer } from "../../helpers/utils";
 import { RETRIEVAL } from "../../helpers/values";
-import { CacheStore, Scoped } from "../../helpers/variables";
+import { Scoped } from "../../helpers/variables";
 import { awaitRefreshToken } from "../auth/accessor";
 import { simplifyCaughtError } from "simplify-error";
 import { guardObject, Validator } from "guard-object";
 import cloneDeep from "lodash/cloneDeep";
 import { serialize } from "entity-serializer";
+import { getFetchResources, insertFetchResources } from "./accessor";
 
-const buildFetchData = (data) => {
+const buildFetchData = (data, extras) => {
     const { ok, type, status, statusText, redirected, url, headers, size, base64 } = data;
 
     const response = new Response(Buffer.from(base64, 'base64'), {
@@ -20,7 +21,7 @@ const buildFetchData = (data) => {
         size
     });
 
-    Object.entries({ ok, type, url, redirected, size })
+    Object.entries({ ok, type, url, redirected, size, ...extras })
         .forEach(([k, v]) => {
             if (response[k] !== v)
                 Object.defineProperty(response, k, {
@@ -33,7 +34,7 @@ const buildFetchData = (data) => {
 }
 
 export const mfetch = async (input = '', init, config) => {
-    const { projectUrl, serverE2E_PublicKey, method, maxRetries = 7, disableCache, uglify, extraHeaders } = config;
+    const { projectUrl, serverE2E_PublicKey, method, maxRetries = 1, disableCache = false, uglify, extraHeaders } = config;
     const { headers, body } = init || {};
 
     if (method !== undefined)
@@ -61,9 +62,6 @@ export const mfetch = async (input = '', init, config) => {
             throw `"${e}" in header is a reserved prop`;
     });
 
-    // if (isBaseUrl && !rawApproach)
-    //     throw `please set { rawApproach: true } if you're trying to access different endpoint at "${input}"`;
-
     if (body !== undefined) {
         if (
             typeof body !== 'string' &&
@@ -80,6 +78,7 @@ export const mfetch = async (input = '', init, config) => {
             input
         ]).toString('base64')
     );
+    const processReqId = `${reqId}_${disableCache}`;
 
     let retries = 0, hasFinalize;
 
@@ -93,44 +92,38 @@ export const mfetch = async (input = '', init, config) => {
             hasFinalize = true;
 
             if (enableMinimizer) {
-                (Scoped.PendingFetchCollective.pendingResolution[reqId] || []).forEach(e => {
+                const resolutionList = (Scoped.PendingFetchCollective[processReqId] || []).slice(0);
+
+                if (Scoped.PendingFetchCollective[processReqId])
+                    delete Scoped.PendingFetchCollective[processReqId];
+
+                resolutionList.forEach(e => {
                     e(a, b);
                 });
-                if (Scoped.PendingFetchCollective.pendingResolution[reqId])
-                    delete Scoped.PendingFetchCollective.pendingResolution[reqId];
-
-                if (Scoped.PendingFetchCollective.pendingProcess[reqId])
-                    delete Scoped.PendingFetchCollective.pendingProcess[reqId];
             }
         };
 
         await awaitStore();
-        const reqData = CacheStore.FetchedStore[projectUrl]?.[reqId];
-        const resolveCache = () => {
-            finalize({
-                ...buildFetchData(reqData),
-                fromCache: true
-            });
+        const resolveCache = (reqData) => {
+            finalize(buildFetchData(reqData), { fromCache: true });
         };
 
         try {
             if (retryProcess === 1) {
                 if (enableMinimizer) {
-                    if (Scoped.PendingFetchCollective.pendingProcess[reqId]) {
-                        if (!Scoped.PendingFetchCollective.pendingResolution[reqId])
-                            Scoped.PendingFetchCollective.pendingResolution[reqId] = [];
-
-                        Scoped.PendingFetchCollective.pendingResolution[reqId].push((a, b) => {
+                    if (Scoped.PendingFetchCollective[processReqId]) {
+                        Scoped.PendingFetchCollective[processReqId].push((a, b) => {
                             if (a) resolve(cloneDeep(a.result));
                             else reject(cloneDeep(b));
                         });
                         return;
                     }
-                    Scoped.PendingFetchCollective.pendingProcess[reqId] = true;
+                    Scoped.PendingFetchCollective[processReqId] = [];
                 }
 
+                const reqData = await getFetchResources(projectUrl, reqId);
                 if (retrieval.startsWith('sticky') && reqData) {
-                    resolveCache();
+                    resolveCache(reqData);
                     if (retrieval !== RETRIEVAL.STICKY_RELOAD) return;
                 }
             }
@@ -183,46 +176,42 @@ export const mfetch = async (input = '', init, config) => {
                 )
             };
 
-            if (shouldCache) {
-                if (!CacheStore.FetchedStore[projectUrl])
-                    CacheStore.FetchedStore[projectUrl] = {};
-                CacheStore.FetchedStore[projectUrl][reqId] = cloneDeep(resObj);
-                updateCacheStore();
-            }
+            if (shouldCache) insertFetchResources(projectUrl, reqId, resObj);
 
             finalize(buildFetchData(resObj));
         } catch (e) {
+            let thisRecord;
+
+            const getThisRecord = async () => thisRecord ? thisRecord[0]
+                : (thisRecord = [await getFetchResources(projectUrl, reqId)])[0];
+
             if (e?.simpleError) {
                 finalize(undefined, e.simpleError);
             } else if (
-                (retrieval === RETRIEVAL.CACHE_NO_AWAIT && !reqData) ||
+                (retrieval === RETRIEVAL.CACHE_NO_AWAIT && !(await getThisRecord())) ||
                 retrieval === RETRIEVAL.STICKY_NO_AWAIT ||
                 retrieval === RETRIEVAL.NO_CACHE_NO_AWAIT
             ) {
                 finalize(undefined, simplifyCaughtError(e).simpleError);
             } else if (
                 shouldCache &&
-                (retrieval === RETRIEVAL.DEFAULT || retrieval === RETRIEVAL.CACHE_NO_AWAIT) &&
-                reqData
+                [
+                    RETRIEVAL.DEFAULT,
+                    RETRIEVAL.CACHE_NO_AWAIT,
+                    RETRIEVAL.CACHE_AWAIT
+                ].includes(retrieval) &&
+                await getThisRecord()
             ) {
-                resolveCache();
-            } else if (retries >= maxRetries) {
+                resolveCache(await getThisRecord());
+            } else if (retries > maxRetries) {
                 finalize(undefined, simplifyCaughtError(e).simpleError);
             } else {
                 const listener = listenReachableServer(async online => {
                     if (online) {
                         listener();
                         callFetch().then(
-                            e => {
-                                if (retryProcess === 1) {
-                                    finalize(e);
-                                } else resolve(e);
-                            },
-                            e => {
-                                if (retryProcess === 1) {
-                                    finalize(undefined, e);
-                                } else reject(e);
-                            }
+                            e => finalize(e),
+                            e => finalize(undefined, e)
                         );
                     }
                 }, projectUrl);
@@ -230,5 +219,5 @@ export const mfetch = async (input = '', init, config) => {
         }
     });
 
-    return await callFetch();
+    return (await callFetch());
 };

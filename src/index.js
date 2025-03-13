@@ -9,7 +9,7 @@ import { initTokenRefresher, listenToken, listenTokenReady, triggerAuthToken } f
 import { TIMESTAMP, DOCUMENT_EXTRACTION, FIND_GEO_JSON, GEO_JSON, TIMESTAMP_OFFSET } from "./products/database/types";
 import { mfetch } from "./products/http_callable";
 import { io } from "socket.io-client";
-import { AUTH_PROVIDER_ID, CACHE_PROTOCOL } from "./helpers/values";
+import { AUTH_PROVIDER_ID } from "./helpers/values";
 import EngineApi from './helpers/engine_api';
 import { Validator } from 'guard-object';
 import cloneDeep from 'lodash/cloneDeep';
@@ -39,6 +39,8 @@ class RNMT {
         validateMTConfig(config, this);
         this.config = {
             ...config,
+            dbName: config.dbName || '',
+            dbUrl: config.dbUrl || '',
             serverE2E_PublicKey: config.serverE2E_PublicKey && new Uint8Array(Buffer.from(config.serverE2E_PublicKey, 'base64')),
             castBSON: config.castBSON === undefined || config.castBSON,
             maxRetries: config.maxRetries || 3,
@@ -125,14 +127,19 @@ class RNMT {
         });
     }
 
-    getDatabase = (dbName, dbUrl) => ({
-        collection: (path) => new MTCollection({
-            ...this.config,
-            path,
-            ...dbName ? { dbName } : {},
-            ...dbUrl ? { dbUrl } : {}
-        })
-    });
+    getDatabase = (dbName, dbUrl) => {
+        if (dbName) ConfigValidator.dbName(dbName);
+        if (dbUrl) ConfigValidator.dbUrl(dbUrl);
+
+        return {
+            collection: (path) => new MTCollection({
+                ...this.config,
+                path,
+                dbName: dbName || '',
+                dbUrl: dbUrl || ''
+            })
+        };
+    }
 
     collection = (path) => new MTCollection({ ...this.config, path });
 
@@ -379,14 +386,10 @@ const discloseSocketArguments = (args = []) => {
 }
 
 const validateReleaseCacheProp = (prop) => {
-    const cacheList = [...Object.values(CACHE_PROTOCOL)];
-
     Object.entries(prop).forEach(([k, v]) => {
-        if (k === 'cachePassword') {
+        if (k === 'sqliteKey') {
             if (typeof v !== 'string' || v.trim().length <= 0)
-                throw `Invalid value supplied to cachePassword, value must be a string and greater than 0 characters`;
-        } else if (k === 'cacheProtocol') {
-            if (!cacheList.includes(`${v}`)) throw `unknown value supplied to ${k}, expected any of ${cacheList}`;
+                throw `Invalid value supplied to "sqliteKey", value must be a string and greater than 0 characters`;
         } else if (k === 'io') {
             Object.entries(v).forEach(([k, v]) => {
                 if (k === 'input' || k === 'output') {
@@ -394,18 +397,17 @@ const validateReleaseCacheProp = (prop) => {
                         throw `Invalid value supplied to "io.${k}", expected a function but got "${v}"`;
                 } else throw `Unexpected property named "io.${k}"`;
             });
+            if (!v?.input && !v?.output) throw '"input" and "output" are required when "io" is provided';
         } else if (k === 'promoteCache') {
             if (typeof v !== 'boolean') throw 'promoteCache should be a boolean';
-        } else if (k === 'heapMemory') {
-            if (typeof v !== 'number' || v <= 0)
-                throw `Invalid value supplied to heapMemory, value must be an integer greater than zero`;
+        } else if (['maxLocalDatabaseSize', 'maxLocalFetchHttpSize'].includes(k)) {
+            if (!Validator.POSITIVE_INTEGER(v) || v <= 0)
+                throw `Invalid value supplied to ${k}, value must be a positive integer greater than zero`;
         } else throw `Unexpected property named ${k}`;
     });
-
-    if (!prop?.io && !prop?.cacheProtocol) throw 'You need to provide either "io" or "cacheProtocol"';
 }
 
-const validator = {
+const ConfigValidator = {
     dbName: (v) => {
         if (typeof v !== 'string' || !v.trim())
             throw `Invalid value supplied to dbName, value must be a non-empty string`;
@@ -460,8 +462,8 @@ const validateMTConfig = (config, that) => {
         throw `${that.constructor.name} config is not an object`;
 
     for (const [k, v] of Object.entries(config)) {
-        if (!validator[k]) throw `Unexpected property named ${k}`;
-        validator[k](v);
+        if (!ConfigValidator[k]) throw `Unexpected property named ${k}`;
+        ConfigValidator[k](v);
     }
 
     if (config.enableE2E_Encryption && !config.serverE2E_PublicKey)

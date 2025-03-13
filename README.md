@@ -19,10 +19,8 @@ yarn add react-native-mosquito-transport
 ```js
 import RNMosquitoTransport from "react-native-mosquito-transport";
 
-RNMosquitoTransport.initializeCache({
-  cachePassword: "****",
-  cacheProtocol: "sqlite",
-});
+// uses sqlite to cache it data by default
+RNMosquitoTransport.initializeCache();
 
 const mclient = new RNMosquitoTransport({
   projectUrl: "http://localhost:3444"
