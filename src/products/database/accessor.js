@@ -200,7 +200,7 @@ export const getRecord = async (builder, accessIdWithoutLimit, episode = 0) => {
     await awaitStore();
     const { io } = Scoped.ReleaseCacheData;
     const { projectUrl, dbUrl, dbName, path, command } = builder;
-    const { limit, sort, direction, random } = command;
+    const { limit, sort, direction, random, findOne } = command;
     const isEpisode = episode === 1;
 
     const transformData = (data) => {
@@ -554,7 +554,7 @@ export const addPendingWrites = async (builder, writeId, result) => {
                     return findOne ? scrapDocs[0] : scrapDocs;
                 }));
 
-                return Array.isArray(extraction) ? scrapedProjection : scrapedProjection[0];
+                return cloneDeep(Array.isArray(extraction) ? scrapedProjection : scrapedProjection[0]);
             }
 
             if (['setOne', 'setMany'].includes(type)) {
@@ -806,7 +806,7 @@ const snipDocument = (data, find, config) => {
     if (!data || !config) return data;
     const { returnOnly, excludeFields } = config || {};
 
-    let output = { ...data };
+    let output = cloneDeep(data);
 
     if (returnOnly) {
         output = {};
