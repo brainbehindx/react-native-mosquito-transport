@@ -150,7 +150,9 @@ export const mfetch = async (input = '', init, config) => {
                         uglified,
                         'content-type': 'request/buffer',
                         ...initType ? { 'init-content-type': initType } : {}
-                    } : {},
+                    } : encodeBody
+                        ? { 'content-type': 'request/buffer' }
+                        : {},
                     ...(disableAuth || !mtoken || uglified || isBaseUrl) ? {} : { mtoken }
                 }
             });

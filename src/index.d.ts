@@ -71,6 +71,7 @@ export const AUTH_PROVIDER_ID: auth_provider_id;
  * useful for avoiding encrypting data and extra overhead
  */
 export class DoNotEncrypt {
+    constructor(value: any);
     value: any;
 }
 

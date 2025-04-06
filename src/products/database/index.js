@@ -435,7 +435,7 @@ const hydrateForeignDoc = ({ data, doc_holder }) => {
         if (v?._foreign_doc) {
             v._foreign_doc = Array.isArray(v._foreign_doc)
                 ? v._foreign_doc.map(k => doc_holder[k])
-                : doc_holder[k];
+                : doc_holder[v._foreign_doc];
         }
         return v;
     });
