@@ -505,8 +505,11 @@ const findObject = async (builder, config) => {
                     Scoped.PendingDbReadCollective[processAccessId] = [];
                 }
 
-                const staleData = await getRecordData();
-                if (retrieval.startsWith('sticky') && staleData) {
+                let staleData;
+                if (
+                    retrieval.startsWith('sticky') &&
+                    (staleData = await getRecordData())
+                ) {
                     finalize(staleData);
                     if (retrieval !== RETRIEVAL.STICKY_RELOAD) return;
                 }

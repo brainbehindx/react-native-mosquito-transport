@@ -6,6 +6,7 @@ import { trySendPendingWrite } from "../products/database";
 import { deserialize } from "entity-serializer";
 import { openDB, SQLITE_COMMANDS, SQLITE_PATH } from "./sqlite_manager";
 import { purgeRedundantRecords } from "./purger";
+import { getStoreID, handleBigData, parseBigData } from "./fs_manager";
 
 const { FILE_NAME, TABLE_NAME } = SQLITE_PATH;
 
@@ -44,14 +45,18 @@ export const updateCacheStore = (timer = 300, node) => {
 
             if (!updationKey.length) return;
             const sqlite = await openDB(FILE_NAME);
-            await Promise.allSettled(
+            await Promise.all(
                 updationKey
                     .map(v => [v, v === 'PendingWrites' ? serializeToBase64(CacheStore[v]) : CacheStore[v]])
-                    .map(([ref, value]) =>
-                        sqlite.executeSql(SQLITE_COMMANDS.MERGE(TABLE_NAME, ['ref', 'value']), [ref, JSON.stringify(value)])
-                    )
-            );
-            sqlite.close();
+                    .map(async ([ref, value]) => {
+                        const blobData = await handleBigData(getStoreID(FILE_NAME, TABLE_NAME, ref), value);
+                        return sqlite.executeSql(SQLITE_COMMANDS.MERGE(TABLE_NAME, ['ref', 'value']), [ref, blobData]);
+                    })
+            ).catch(err => {
+                console.error('updateCacheStore err:', err);
+            }).finally(() => {
+                sqlite.close();
+            });
         }
     };
 
@@ -71,14 +76,23 @@ export const releaseCacheStore = async (builder) => {
             data = JSON.parse((await io.input()) || '{}');
         } else {
             const sqlite = await openDB(FILE_NAME);
-            await sqlite.executeSql(`CREATE TABLE IF NOT EXISTS ${TABLE_NAME} ( ref TEXT PRIMARY KEY, value TEXT )`).catch(() => null);
-            const [query] = await sqlite.executeSql(`SELECT * FROM ${TABLE_NAME}`);
-            data = Object.fromEntries(query.rows.raw().map(v => [v.ref, JSON.parse(v.value)]));
-            sqlite.close();
+            await sqlite.executeSql(`CREATE TABLE IF NOT EXISTS ${TABLE_NAME} ( ref TEXT PRIMARY KEY, value BLOB )`).catch(() => null);
+            try {
+                const [query] = await sqlite.executeSql(`SELECT * FROM ${TABLE_NAME}`);
+                data = Object.fromEntries(
+                    await Promise.all(query.rows.raw().map(async v =>
+                        [v.ref, await parseBigData(v.value)]
+                    ))
+                );
+            } catch (error) {
+                console.error('initializeCache sqlite data release err:', error);
+            } finally {
+                sqlite.close();
+            }
         }
         await purgeRedundantRecords(data, builder);
     } catch (e) {
-        console.error('releaseCacheStore data err:', e);
+        console.error('initializeCache data err:', e);
     }
 
     Object.entries(data).forEach(([k, v]) => {

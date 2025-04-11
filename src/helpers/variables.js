@@ -28,7 +28,7 @@ export const Scoped = {
         httpFetch: {}
     },
     initedSqliteInstances: {
-        httpFetch: undefined,
+        httpFetch: {},
         dbQueryCount: {},
         database: {}
     }

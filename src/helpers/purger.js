@@ -3,6 +3,7 @@ import { Validator } from "guard-object";
 import { incrementDatabaseSizeCore } from "../products/database/counter";
 import { incrementFetcherSizeCore } from "../products/http_callable/counter";
 import unsetLodash from 'lodash/unset';
+import { deleteBigData, getStoreID } from "./fs_manager";
 
 const { LIMITER_DATA, LIMITER_RESULT, DB_COUNT_QUERY, FETCH_RESOURCES } = SQLITE_PATH;
 
@@ -156,7 +157,7 @@ export const purgeRedundantRecords = async (data, builder) => {
 
                                 const [instanceData, resultData] = await Promise.all([
                                     sqlite.executeSql(`SELECT access_id, touched, size FROM ${LIMITER_DATA(path)}`),
-                                    sqlite.executeSql(`SELECT access_id-limit, touched, size FROM ${LIMITER_RESULT(path)}`)
+                                    sqlite.executeSql(`SELECT access_id_limiter, touched, size FROM ${LIMITER_RESULT(path)}`)
                                 ]).then(r =>
                                     r.map(v => v[0].rows.raw())
                                 );
@@ -178,19 +179,24 @@ export const purgeRedundantRecords = async (data, builder) => {
                     let cuts = 0;
 
                     for (let i = 0; i < redundantDbRanking.length; i++) {
-                        sizer -= redundantDbRanking[i][0].size || 0;
+                        sizer -= (redundantDbRanking[i][0].size || 0);
                         ++cuts;
                         if (sizer < newSize) break;
                     }
 
                     console.warn(`purging ${cuts} of ${redundantDbRanking.length} db entities`);
                     await Promise.all(redundantDbRanking.slice(0, cuts).map(async ([v, { builder, isCounter, path }]) => {
-                        const sqlite = await openDB(builder);
+                        let db_filename;
+                        const sqlite = await openDB(builder, n => db_filename = n);
                         try {
-                            const table = (isCounter ? DB_COUNT_QUERY : 'access_id-limit' in v ? LIMITER_RESULT : LIMITER_DATA)(path);
-                            const id_field = 'access_id-limit' in v ? 'access_id-limit' : 'access_id';
+                            const table = (isCounter ? DB_COUNT_QUERY : 'access_id_limiter' in v ? LIMITER_RESULT : LIMITER_DATA)(path);
+                            const id_field = 'access_id_limiter' in v ? 'access_id_limiter' : 'access_id';
+                            const primary_key = v[id_field];
 
-                            await sqlite.executeSql(SQLITE_COMMANDS.DELETE_ROW(table, `${id_field} = ?`), [v[id_field]]);
+                            await Promise.all([
+                                sqlite.executeSql(SQLITE_COMMANDS.DELETE_ROW(table, `${id_field} = ?`), [primary_key]),
+                                deleteBigData(getStoreID(db_filename, table, primary_key)).catch(() => null)
+                            ]);
                             if (!isCounter) incrementDatabaseSizeCore(data.DatabaseStats, builder, path, -v.size);
                         } catch (error) {
                             console.log('db redundantClearing err:', error);
@@ -223,16 +229,21 @@ export const purgeRedundantRecords = async (data, builder) => {
                     let cuts = 0;
 
                     for (let i = 0; i < redundantFetchRanking.length; i++) {
-                        sizer -= redundantFetchRanking[i][0].size || 0;
+                        sizer -= (redundantFetchRanking[i][0].size || 0);
                         ++cuts;
                         if (sizer < newSize) break;
                     }
 
                     console.warn(`purging ${cuts} of ${redundantFetchRanking.length} fetcher entities`);
                     await Promise.all(redundantFetchRanking.slice(0, cuts).map(async ([v, projectUrl]) => {
-                        const sqlite = await openDB(FETCH_RESOURCES(projectUrl));
+                        let db_filename;
+                        const sqlite = await openDB(FETCH_RESOURCES(projectUrl), n => db_filename = n);
+
                         try {
-                            await sqlite.executeSql(SQLITE_COMMANDS.DELETE_ROW('main', 'access_id = ?'), [v.access_id]);
+                            await Promise.all([
+                                sqlite.executeSql(SQLITE_COMMANDS.DELETE_ROW('main', 'access_id = ?'), [v.access_id]),
+                                deleteBigData(getStoreID(db_filename, 'main', v.access_id)).catch(() => null)
+                            ]);
                             incrementFetcherSizeCore(data.DatabaseStats, projectUrl, -v.size);
                         } catch (error) {
                             console.log('fetcher redundantClearing err:', error);

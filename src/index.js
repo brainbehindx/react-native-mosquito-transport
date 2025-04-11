@@ -173,8 +173,11 @@ class RNMT {
             socketListenerList = [],
             socketListenerIte = 0;
 
+        /**
+         * @type {import('socket.io-client').Socket}
+         */
+        let socket;
         let hasCancelled,
-            socket,
             tokenListener,
             clientPrivateKey;
 
@@ -299,7 +302,7 @@ class RNMT {
                 lastTokenStatus = status || false;
             }, projectUrl);
         }
-
+        // TODO: disconnected
         return {
             timeout: (timeout) => {
                 if (timeout !== undefined && !Validator.POSITIVE_INTEGER(timeout))
@@ -447,7 +450,7 @@ const ConfigValidator = {
     },
     extraHeaders: v => {
         if (!Validator.OBJECT(v)) throw '"extraHeaders" must be an object';
-        const reservedHeaders = ['mtoken', 'mosquito-token', 'init-content-type', 'content-type', 'uglified'];
+        const reservedHeaders = ['mtoken', 'mosquito-token', 'init-content-type', 'content-type', 'uglified', 'entity-encoded'];
 
         Object.entries(v).forEach(([k, v]) => {
             if (typeof v !== 'string') throw `expected a string at extraHeaders.${k} but got "${v}"`;

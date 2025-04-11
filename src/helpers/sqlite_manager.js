@@ -3,6 +3,7 @@ import { Scoped, SqliteCollective } from './variables';
 import { niceHash } from './peripherals';
 
 enablePromise(true);
+let sqliteKeyHash;
 
 /**
  * this method implement a centralize approach for opening and closing of sqlite database to ensure consistency across multiple task opening and closing the database in diferent order
@@ -10,7 +11,7 @@ enablePromise(true);
  * @param {string} name 
  * @returns {Promise<import('react-native-sqlite-storage').SQLiteDatabase>}
  */
-export const openDB = async (name) => {
+export const openDB = async (name, onName) => {
 
     if (name?.projectUrl) {
         const { projectUrl, dbUrl, dbName } = name;
@@ -19,11 +20,15 @@ export const openDB = async (name) => {
 
     const { sqliteKey } = Scoped.ReleaseCacheData;
 
-    if (sqliteKey) name = `${niceHash(sqliteKey)}__${name}`;
+    if (sqliteKey) {
+        const thisHash = await (sqliteKeyHash || (sqliteKeyHash = niceHash(sqliteKey)));
+        name = `${thisHash}__${name}`;
+    }
+    onName?.(name);
 
     if (!SqliteCollective.openedDb[name]) {
         SqliteCollective.openedDbProcess[name] = 0;
-        SqliteCollective.openedDb[name] = (SqliteCollective.closeDbPromises[name] || Promise.resolve()).finally(() =>
+        SqliteCollective.openedDb[name] = Promise.allSettled([SqliteCollective.closeDbPromises[name] || Promise.resolve()]).then(() =>
             openDatabase({
                 location: 'default',
                 name,
@@ -91,13 +96,14 @@ export const openDB = async (name) => {
  * @param {any} builder 
  * @param {string} access_id 
  * @param {'database' | 'dbQueryCount' | 'httpFetch'} node
- * @returns {(task: (sqlite: import("react-native-sqlite-storage").SQLiteDatabase) => Promise<{any}> )=> Promise<{any}>}
+ * @returns {(task: (sqlite: import("react-native-sqlite-storage").SQLiteDatabase, db_filename: string) => Promise<{any}> )=> Promise<{any}>}
  */
 export const useSqliteLinearAccessId = (builder, access_id, node) => async (task) => {
     const { projectUrl, dbUrl, dbName } = builder;
     const nodeId = typeof builder === 'string' ? `${builder}_${access_id}` : `${projectUrl}_${dbUrl}_${dbName}_${access_id}`;
+    let db_filename;
 
-    const sqlite = await openDB(builder);
+    const sqlite = await openDB(builder, n => db_filename = n);
 
     const thatProcess = Scoped.linearSqliteProcess[node][nodeId];
 
@@ -106,7 +112,7 @@ export const useSqliteLinearAccessId = (builder, access_id, node) => async (task
             if (thatProcess !== undefined) await thatProcess;
         } catch (_) { }
         try {
-            resolve(await task(sqlite));
+            resolve(await task(sqlite, db_filename));
         } catch (error) {
             console.error('useSqliteLinearAccessId err:', error);
             reject(error);
@@ -124,10 +130,10 @@ export const useSqliteLinearAccessId = (builder, access_id, node) => async (task
 export const SQLITE_PATH = {
     FILE_NAME: 'MOSQUITO_TRANSPORT.db',
     TABLE_NAME: 'MT_MAIN',
-    LIMITER_RESULT: path => `"${encodeURIComponent(path)}-LIMITER_RESULT"`,
-    LIMITER_DATA: path => `"${encodeURIComponent(path)}-LIMITER_DATA"`,
-    DB_COUNT_QUERY: path => `"${encodeURIComponent(path)}-DB_COUNT_QUERY"`,
-    FETCH_RESOURCES: projectUrl => `FETCH_RESOURCES-${encodeURIComponent(projectUrl)}.db`
+    LIMITER_RESULT: path => `"${encodeURIComponent(path)}_LIMITER_RESULT"`,
+    LIMITER_DATA: path => `"${encodeURIComponent(path)}_LIMITER_DATA"`,
+    DB_COUNT_QUERY: path => `"${encodeURIComponent(path)}_DB_COUNT_QUERY"`,
+    FETCH_RESOURCES: projectUrl => `FETCH_RESOURCES_${encodeURIComponent(projectUrl)}.db`
 };
 
 export const SQLITE_COMMANDS = {
