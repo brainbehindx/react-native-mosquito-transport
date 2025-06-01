@@ -20,4 +20,5 @@
 - lodashes ✅
 - switch to events package
 - serverTimeOffset
+- avoid sending cookies
 <!-- - error: "refreshToken retry limit exceeded" <--- no need -->

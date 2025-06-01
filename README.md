@@ -13,6 +13,7 @@ or using yarn
 ```sh
 yarn add react-native-mosquito-transport
 ```
+internal bson
 
 ## Usage
 

@@ -1,4 +1,4 @@
-import { deserialize, serialize } from "bson";
+import { deserialize, serialize } from "bson/lib/bson.rn.cjs";
 import { Buffer } from "buffer";
 
 export const deserializeBSON = (data, cast) => {

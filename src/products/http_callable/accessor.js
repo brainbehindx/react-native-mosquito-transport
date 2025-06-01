@@ -66,7 +66,7 @@ export const getFetchResources = async (projectUrl, access_id) => {
     const res = await useSqliteLinearAccessId(FETCH_RESOURCES(projectUrl), access_id, 'httpFetch')(async sqlite => {
         const query = await sqlite.executeSql('SELECT * FROM main WHERE access_id = ?', [access_id]).catch(() => null);
 
-        const rawData = query && query[0].rows.item(0).value;
+        const rawData = query && query[0].rows.item(0)?.value;
         if (!rawData) return null;
 
         const data = await parseBigData(rawData);

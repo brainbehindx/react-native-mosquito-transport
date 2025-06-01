@@ -8,7 +8,7 @@ import { addPendingWrites, generateRecordID, getCountQuery, getRecord, insertCou
 import { validateCollectionName, validateFilter, validateFindConfig, validateFindObject, validateListenFindConfig } from "./validator";
 import { awaitRefreshToken, listenToken } from "../auth/accessor";
 import { DELIVERY, RETRIEVAL } from "../../helpers/values";
-import { ObjectId } from "bson";
+import { ObjectId } from "bson/lib/bson.rn.cjs";
 import { guardObject, Validator } from "guard-object";
 import { simplifyCaughtError } from "simplify-error";
 import cloneDeep from "lodash/cloneDeep";

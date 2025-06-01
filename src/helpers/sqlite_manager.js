@@ -114,7 +114,7 @@ export const useSqliteLinearAccessId = (builder, access_id, node) => async (task
         try {
             resolve(await task(sqlite, db_filename));
         } catch (error) {
-            console.error('useSqliteLinearAccessId err:', error);
+            console.error('useSqliteLinearAccessId err:', error, ' builder:', builder);
             reject(error);
         } finally {
             if (Scoped.linearSqliteProcess[node][nodeId] === thisPromise)

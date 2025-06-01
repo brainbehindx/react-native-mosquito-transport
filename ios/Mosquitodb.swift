@@ -100,7 +100,6 @@ class MosquitodbUploadTask: NSObject, URLSessionDataDelegate {
                     request.setValue(value, forHTTPHeaderField: key)
                 }
             }
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
             if options["authToken"] != nil {
                 request.setValue(options["authToken"] as? String, forHTTPHeaderField: "Mosquito-Token")
             }
@@ -137,7 +136,7 @@ class MosquitodbUploadTask: NSObject, URLSessionDataDelegate {
         
         trigger!([
             "mt-uploading-progress", [
-                "sentBtyes": Float(totalBytesSent),
+                "sentBytes": Float(totalBytesSent),
                 "totalBytes": Float(totalBytesExpectedToSend),
                 "processID": mainProcessID
             ]

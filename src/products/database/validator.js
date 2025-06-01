@@ -2,7 +2,7 @@ import { guardArray, GuardError, guardObject, GuardSignal, niceGuard, Validator 
 import { sameInstance } from "../../helpers/peripherals";
 import { RETRIEVAL } from "../../helpers/values";
 import getLodash from 'lodash/get';
-import { Binary, BSONRegExp, BSONSymbol, Code, DBRef, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp, UUID } from 'bson';
+import { Binary, BSONRegExp, BSONSymbol, Code, DBRef, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp, UUID } from 'bson/lib/bson.rn.cjs';
 import { bboxPolygon, booleanIntersects, booleanWithin, circle, distance, polygon } from "@turf/turf";
 
 const DirectionList = [1, -1, 'asc', 'desc', 'ascending', 'descending'];

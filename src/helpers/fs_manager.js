@@ -1,18 +1,28 @@
+import { Platform } from "react-native";
 import { Buffer } from 'buffer';
 import { deserialize, serialize } from 'entity-serializer';
-import { DocumentDirectoryPath, readFile, unlink, writeFile } from 'react-native-fs';
+import { Dirs, FileSystem } from 'react-native-file-access';
 
 const MAX_INLINE_BLOB = 1024;
 
-const resolvePath = (path = '') => `file:///${DocumentDirectoryPath}${path.startsWith('/') ? path : '/' + path}`;
+const DIR_PATH = `${Platform.OS === 'android' ? Dirs.DatabaseDir : Dirs.MainBundleDir}/MOSQUITO`;
+const resolvePath = (path = '') => `${DIR_PATH}/${path.startsWith('/') ? path : '/' + path}`;
 
-const fsWrite = (path, data) => writeFile(resolvePath(path), data instanceof Buffer ? data.toString('base64') : data);
+const DIR_CREATION_PROMISE = FileSystem.mkdir(DIR_PATH).catch(() => null);
 
-const fsRead = async (path) => Buffer.from(await readFile(resolvePath(path), 'base64'), 'base64');
+const fsWrite = async (path, data) => {
+    await DIR_CREATION_PROMISE;
+    return FileSystem.writeFile(resolvePath(path), data instanceof Buffer ? data.toString('base64') : data, 'base64');
+}
+
+const fsRead = async (path) => {
+    await DIR_CREATION_PROMISE;
+    return Buffer.from(await FileSystem.readFile(resolvePath(path), 'base64'), 'base64');
+}
 
 export const getStoreID = (db_filename, table, primary_key) => `${table}_${primary_key}_${db_filename}.blob`;
 
-export const deleteBigData = (store_id) => unlink(resolvePath(store_id));
+export const deleteBigData = (store_id) => FileSystem.unlink(resolvePath(store_id));
 
 export const handleBigData = async (store_id, data) => {
     const bufData = serialize(data);

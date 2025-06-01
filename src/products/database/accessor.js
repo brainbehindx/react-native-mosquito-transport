@@ -7,7 +7,7 @@ import setLodash from 'lodash/set';
 import unsetLodash from 'lodash/unset';
 import { DatabaseRecordsListener } from "../../helpers/listeners";
 import cloneDeep from "lodash/cloneDeep";
-import { BSONRegExp, ObjectId, Timestamp } from "bson";
+import { BSONRegExp, ObjectId, Timestamp } from "bson/lib/bson.rn.cjs";
 import { niceGuard, Validator } from "guard-object";
 import { TIMESTAMP } from "../..";
 import { docSize, incrementDatabaseSize } from "./counter";

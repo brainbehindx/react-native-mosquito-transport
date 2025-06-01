@@ -3,7 +3,7 @@ import { ServerReachableListener } from "./listeners";
 import naclPkg from 'tweetnacl';
 import getLodash from "lodash/get";
 import { deserialize, serialize } from "entity-serializer";
-import { CONSTANTS, JSHash } from 'react-native-hash';
+import { sha256 } from 'react-native-sha256';
 
 const { box, randomBytes } = naclPkg;
 
@@ -65,7 +65,7 @@ export function sortArrayByObjectKey(arr = [], key) {
 };
 
 export async function niceHash(str = '') {
-    const hash = await JSHash(str, CONSTANTS.HashAlgorithms.md5);
+    const hash = await sha256(str);
     if (hash.length > str.length) return encodeBinary(str);
     return hash;
 };

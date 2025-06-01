@@ -118,8 +118,14 @@ export class MTStorage {
         const { createHash, awaitServer } = options || {};
         let hasFinished, hasCancelled;
 
+        const thisComplete = (...args) => {
+            if (hasFinished) return;
+            hasFinished = true;
+            onComplete?.(...args);
+        }
+
         if (typeof file !== 'string' || !file.trim()) {
-            onComplete?.({ error: 'file_path_invalid', message: 'file must be a non-empty string in uploadFile()' });
+            thisComplete?.({ error: 'file_path_invalid', message: 'file must be a non-empty string in uploadFile()' });
             return () => { };
         }
         destination = destination?.trim?.();
@@ -127,12 +133,11 @@ export class MTStorage {
         try {
             validateDestination(destination);
         } catch (error) {
-            onComplete?.({ error: 'destination_invalid', message: error });
+            thisComplete?.({ error: 'destination_invalid', message: error });
             return () => { };
         }
 
-        const isAsset = (file.startsWith('ph://') || file.startsWith('content://'));
-
+        const isAsset = file.startsWith('ph://') || file.startsWith('content://');
         file = isAsset ? file.trim() : prefixStoragePath(file.trim());
 
         const { projectUrl, uglify, extraHeaders } = this.builder;
@@ -143,30 +148,28 @@ export class MTStorage {
             await awaitRefreshToken(projectUrl);
 
             if (hasCancelled) return;
-            const progressListener = emitter.addListener('mt-uploading-progress', ({ processID: ref, sentBtyes, totalBytes }) => {
+            const progressListener = emitter.addListener('mt-uploading-progress', ({ processID: ref, sentBytes, totalBytes }) => {
                 if (processID !== ref || hasFinished || hasCancelled) return;
-                onProgress?.({ sentBtyes, totalBytes });
+                onProgress?.({ sentBytes, totalBytes });
             });
             const resultListener = emitter.addListener('mt-uploading-status', ({ processID: ref, error, errorDes, result }) => {
-                if (processID !== ref || hasFinished) return;
+                if (processID !== ref) return;
                 if (result)
                     try {
                         result = JSON.parse(result);
-                    } catch (e) { }
+                    } catch (_) { }
 
                 const downloadUrl = result?.downloadUrl || undefined;
-
-                if (!hasFinished && !hasCancelled)
-                    onComplete?.(downloadUrl ? undefined : (result?.simpleError || { error, message: errorDes }), downloadUrl);
+                thisComplete?.(downloadUrl ? undefined : (result?.simpleError || { error, message: errorDes }), downloadUrl);
                 resultListener.remove();
                 progressListener.remove();
-                hasFinished = true;
             });
+            const authToken = Scoped.AuthJWTToken[projectUrl];
 
             RNMTModule.uploadFile({
                 url: EngineApi._uploadFile(projectUrl, uglify),
                 file: isAsset ? file : file.substring('file://'.length),
-                authToken: Scoped.AuthJWTToken[projectUrl],
+                ...authToken ? { authToken } : {},
                 createHash: createHash ? 'yes' : 'no',
                 destination,
                 processID,
@@ -180,8 +183,8 @@ export class MTStorage {
             if (hasFinished || hasCancelled) return;
             hasCancelled = true;
             setTimeout(() => {
-                onComplete?.({ error: 'upload_aborted', message: 'The upload process was aborted' });
-            }, 1);
+                thisComplete?.({ error: 'upload_aborted', message: 'The upload process was aborted' });
+            }, 0);
             RNMTModule.cancelUpload(processID);
         }
     }

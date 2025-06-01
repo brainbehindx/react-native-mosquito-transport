@@ -531,7 +531,7 @@ interface DownloadProgressStats {
 }
 
 interface UploadProgressStats {
-    sentBtyes: number;
+    sentBytes: number;
     totalBytes: number;
 }
 
