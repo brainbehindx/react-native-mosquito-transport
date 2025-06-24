@@ -137,7 +137,7 @@ export const SQLITE_PATH = {
 };
 
 export const SQLITE_COMMANDS = {
-    MERGE: (table, columns = []) => `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')}) ON CONFLICT(${columns[0]}) DO UPDATE SET ${columns.slice(1).map(v => `${v} = excluded.${v}`).join(', ')}`,
+    MERGE: (table, columns = []) => `INSERT OR REPLACE INTO ${table} (${columns.join(', ')}) VALUES (${columns.fill('?').join(', ')})`,
     UPDATE_COLUMNS: (table, columns = [], query = '') => `UPDATE ${table} SET ${columns.map(v => `${v} = ?`).join(', ')} WHERE ${query}`,
     CREATE_INDEX: (table, columns) => `CREATE INDEX idx_${columns.join('_')} ON ${table}(${columns.join(', ')})`,
     DELETE_ROW: (table, query) => `DELETE FROM ${table} WHERE ${query}`

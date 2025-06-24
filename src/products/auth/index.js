@@ -220,7 +220,8 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
         resolve({
             user: parseToken(r.result.token),
             token: r.result.token,
-            refreshToken: r.result.refreshToken
+            refreshToken: r.result.refreshToken,
+            isNewUser: !!r.result.isNewUser
         });
         await injectFreshToken(builder, r.result);
         revokeAuthIntance(builder, thisAuthStore);
@@ -285,7 +286,7 @@ export const purgePendingToken = async (nodeId) => {
     try {
         let isConnected;
         try {
-            isConnected = (await (await fetch(_areYouOk(projectUrl))).json(), { cache: 'no-cache' }).status === 'yes';
+            isConnected = (await (await fetch(_areYouOk(projectUrl))).json(), { cache: 'no-cache', credentials: 'omit' }).status === 'yes';
         } catch (_) { }
 
         if (!isConnected)

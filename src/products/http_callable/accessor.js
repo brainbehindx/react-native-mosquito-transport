@@ -31,8 +31,8 @@ export const insertFetchResources = async (projectUrl, access_id, value) => {
                 Scoped.initedSqliteInstances.httpFetch[initNode] = (async () => {
                     await sqlite.executeSql(`CREATE TABLE IF NOT EXISTS main ( access_id TEXT PRIMARY KEY, value BLOB, touched INTEGER, size INTEGER )`).catch(() => null);
                     await Promise.allSettled([
-                        sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX('main', ['access_id'])),
-                        sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX('main', ['touched']))
+                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX('main', ['access_id'])),
+                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX('main', ['touched']))
                     ]);
                 })();
             }

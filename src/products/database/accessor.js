@@ -57,7 +57,7 @@ export const insertCountQuery = async (builder, access_id, value) => {
                 Scoped.initedSqliteInstances.dbQueryCount[initNode] = (async () => {
                     await sqlite.executeSql(`CREATE TABLE IF NOT EXISTS ${DB_COUNT_QUERY(path)} ( access_id TEXT PRIMARY KEY, value TEXT, touched INTEGER )`).catch(() => null);
                     await Promise.allSettled([
-                        sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(DB_COUNT_QUERY(path), ['access_id'])),
+                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(DB_COUNT_QUERY(path), ['access_id'])),
                         // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(DB_COUNT_QUERY(path), ['touched']))
                     ]);
                 })();
@@ -117,9 +117,9 @@ export const insertRecord = async (builder, config, accessIdWithoutLimit, value,
                     ]);
 
                     await Promise.allSettled([
-                        sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_DATA(path), ['access_id'])),
+                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_DATA(path), ['access_id'])),
                         // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_DATA(path), ['touched'])),
-                        sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_RESULT(path), ['access_id_limiter'])),
+                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_RESULT(path), ['access_id_limiter'])),
                         // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_RESULT(path), ['touched']))
                     ]);
                 })();

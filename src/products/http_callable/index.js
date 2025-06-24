@@ -143,6 +143,7 @@ export const mfetch = async (input = '', init, config) => {
 
             const f = await fetch(isLink ? input : `${projectUrl}/${normalizeRoute(input)}`, {
                 ...(!isBaseUrl || hasBody) ? { method: 'POST' } : {},
+                credentials: 'omit',
                 ...init,
                 ...uglified ? { body: reqBuilder } : encodeBody ? { body: serialize(body) } : {},
                 // cache: 'no-cache',

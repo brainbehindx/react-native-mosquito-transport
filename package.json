@@ -1,6 +1,6 @@
 {
   "name": "react-native-mosquito-transport",
-  "version": "0.0.27",
+  "version": "0.0.30",
   "description": "React native javascript sdk for mosquito-transport (https://github.com/brainbehindx/mosquito-transport)",
   "main": "src/index.js",
   "type": "module",
@@ -33,7 +33,6 @@
     "entity-serializer": "^1.0.3",
     "guard-object": "^1.1.4",
     "lodash": "^4.17.21",
-    "react-native-get-random-values": "^1.9.0",
     "simplify-error": "^1.0.1",
     "socket.io-client": "^4.6.2",
     "subscription-listener": "^1.1.2",
@@ -42,9 +41,10 @@
   "peerDependencies": {
     "react": "*",
     "react-native": "*",
-    "react-native-file-access": "*",
+    "react-native-fs": "*",
     "react-native-sha256": "*",
-    "react-native-sqlite-storage": "*"
+    "react-native-sqlite-storage": "*",
+    "react-native-get-random-values": "*"
   },
   "devDependencies": {
     "@types/react-native-sqlite-storage": "^6.0.5"

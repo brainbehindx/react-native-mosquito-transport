@@ -11,6 +11,7 @@ export const listenReachableServer = (callback, projectUrl) => {
     let lastValue;
     return ServerReachableListener.listenTo(projectUrl, t => {
         if (typeof t === 'boolean' && t !== lastValue) callback?.(t);
+        lastValue = t;
     }, true);
 };
 

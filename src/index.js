@@ -21,7 +21,8 @@ const {
     _listenDocument,
     _startDisconnectWriteTask,
     _cancelDisconnectWriteTask,
-    _listenUserVerification
+    _listenUserVerification,
+    _areYouOk
 } = EngineApi;
 
 // https://socket.io/docs/v3/emit-cheatsheet/#reserved-events
@@ -73,12 +74,9 @@ class RNMT {
                     _from_base: true
                 }
             });
-
-            socket.on('_signal_signout', () => {
-                this.auth().signOut();
-            });
-
-            socket.on('connect', () => {
+            let connectionIte = 0;
+            const onConnect = () => {
+                ++connectionIte;
                 isConnected = true;
                 Scoped.IS_CONNECTED[projectUrl] = true;
                 if (queuedToken) updateMountedToken(queuedToken.token);
@@ -86,12 +84,33 @@ class RNMT {
                 awaitStore().then(() => {
                     trySendPendingWrite(projectUrl);
                 });
-            });
-
-            socket.on('disconnect', () => {
+            };
+            const onDisconnect = () => {
+                ++connectionIte;
                 isConnected = false;
                 Scoped.IS_CONNECTED[projectUrl] = false;
                 ServerReachableListener.dispatch(projectUrl, false);
+            }
+
+            const manualCheckConnection = () => {
+                const ref = ++connectionIte;
+                fetch(_areYouOk(projectUrl), { cache: 'no-cache', credentials: 'omit' }).then(async r => {
+                    if ((await r.json()).status === 'yes') {
+                        if (ref === connectionIte) onConnect();
+                    } else throw null;
+                }).catch(() => {
+                    if (ref === connectionIte) onDisconnect();
+                });
+            }
+            manualCheckConnection();
+
+            socket.on('_signal_signout', () => {
+                this.auth().signOut();
+            });
+
+            socket.on('connect', onConnect);
+            socket.on('disconnect', () => {
+                manualCheckConnection();
             });
 
             const updateMountedToken = (token) => {

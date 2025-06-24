@@ -164,7 +164,8 @@ export const buildFetchInterface = async ({ body, authToken, method, uglify, ser
             'Content-type': uglify ? 'request/buffer' : 'application/json',
             ...(authToken && !uglify) ? { 'Mosquito-Token': authToken } : {}
         },
-        method: method || 'POST'
+        method: method || 'POST',
+        credentials: 'omit'
     }, keyPair];
 };
 
