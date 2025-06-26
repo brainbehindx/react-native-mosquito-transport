@@ -146,6 +146,10 @@ interface RNMTSocket {
     on: (route: string, callback?: () => any) => void;
     once: (route: string, callback?: () => any) => void;
     destroy: () => void;
+    /**
+     * Whether the socket is currently disconnected
+     */
+    disconnected: boolean;
 }
 
 interface BatchWriteValue {
