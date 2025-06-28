@@ -48,7 +48,7 @@ export const mfetch = async (input = '', init, config) => {
     const { retrieval = RETRIEVAL.DEFAULT, enableMinimizer, rawApproach } = method || {};
     const isLink = Validator.LINK(input);
     const isBaseUrl = isLink || rawApproach;
-    const disableAuth = method?.disableAuth || isBaseUrl;
+    const disableAuth = method?.disableAuth === undefined ? isBaseUrl : method?.disableAuth;
     const hasBody = body !== undefined;
     const shouldCache = (retrieval !== RETRIEVAL.DEFAULT || (config.disableCache === undefined ? !hasBody : !disableCache)) &&
         ![RETRIEVAL.NO_CACHE_NO_AWAIT, RETRIEVAL.NO_CACHE_AWAIT].includes(retrieval);
@@ -135,7 +135,7 @@ export const mfetch = async (input = '', init, config) => {
             if (!disableAuth && await getReachableServer(projectUrl))
                 await awaitRefreshToken(projectUrl);
 
-            const mtoken = Scoped.AuthJWTToken[projectUrl];
+            const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
             const initType = rawHeader['content-type'];
             const encodeBody = initType === undefined && hasBody && !isBaseUrl;
 
@@ -157,13 +157,13 @@ export const mfetch = async (input = '', init, config) => {
                     } : encodeBody
                         ? { 'content-type': 'request/buffer', 'entity-encoded': '1' }
                         : {},
-                    ...(disableAuth || !mtoken || uglified || isBaseUrl) ? {} : { mtoken }
+                    ...(!mtoken || uglified) ? {} : { mtoken }
                 }
             });
             const { ok, type, status, statusText, redirected, url, headers, size } = f;
             const simple = headers.get('simple_error');
 
-            if (!isBaseUrl && simple) throw { simpleError: JSON.parse(simple) };
+            if (!isLink && simple) throw { simpleError: JSON.parse(simple) };
 
             const base64 = uglified ?
                 Buffer.from(await deserializeE2E(await f.arrayBuffer(), serverE2E_PublicKey, privateKey)).toString('base64') :

@@ -283,6 +283,11 @@ interface DocumentError extends ErrorResponse {
 
 interface FetchHttpConfig {
     retrieval?: GetConfig['retrieval'];
+    /**
+     * disable sending authentication token along with this request
+     * 
+     * Defaults to true when either `rawApproach` is true or the request url is absolute otherwise false
+     */
     disableAuth?: boolean;
     enableMinimizer?: boolean;
     rawApproach?: boolean;
@@ -315,7 +320,7 @@ interface WriteConfig {
     delivery?: Delievery;
 }
 
-type Retrieval = 'sticky' | 'sticky-no-await' | 'sticky-reload' | 'default' | 'cache-no-await' | 'no-cache-no-await' | 'no-cache-await';
+type Retrieval = 'sticky' | 'sticky-no-await' | 'sticky-reload' | 'default' | 'cache-no-await' | 'no-cache-no-await' | 'no-cache-await' | 'cache-await';
 
 interface GetConfig {
     excludeFields?: string | string[];
