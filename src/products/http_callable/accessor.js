@@ -2,11 +2,10 @@ import { updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import cloneDeep from "lodash/cloneDeep";
 import { serialize } from "entity-serializer";
-import { SQLITE_COMMANDS, SQLITE_PATH, useSqliteLinearAccessId } from "../../helpers/sqlite_manager";
 import { incrementFetcherSize } from "./counter";
-import { getStoreID, handleBigData, parseBigData } from "../../helpers/fs_manager";
+import { FS_PATH, useFS } from "../../helpers/fs_manager";
 
-const { FETCH_RESOURCES } = SQLITE_PATH;
+const { FETCH_RESOURCES } = FS_PATH;
 
 export const insertFetchResources = async (projectUrl, access_id, value) => {
     value = cloneDeep(value);
@@ -23,35 +22,16 @@ export const insertFetchResources = async (projectUrl, access_id, value) => {
             data: value,
             size: dataSize
         };
+        updateCacheStore(['FetchedStore', 'DatabaseStats']);
     } else {
-        const initNode = projectUrl;
+        await useFS(FETCH_RESOURCES(projectUrl), access_id, 'httpFetch')(async fs => {
+            const b4Data = await fs.find('main', access_id, ['size']).catch(() => null);
 
-        await useSqliteLinearAccessId(FETCH_RESOURCES(projectUrl), access_id, 'httpFetch')(async (sqlite, db_filename) => {
-            if (!Scoped.initedSqliteInstances.httpFetch[initNode]) {
-                Scoped.initedSqliteInstances.httpFetch[initNode] = (async () => {
-                    await sqlite.executeSql(`CREATE TABLE IF NOT EXISTS main ( access_id TEXT PRIMARY KEY, value BLOB, touched INTEGER, size INTEGER )`).catch(() => null);
-                    await Promise.allSettled([
-                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX('main', ['access_id'])),
-                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX('main', ['touched']))
-                    ]);
-                })();
-            }
-
-            await Scoped.initedSqliteInstances.httpFetch[initNode];
-            const b4Data = await sqlite.executeSql(`SELECT access_id, size FROM main WHERE access_id = ?`, [access_id]).then(r =>
-                r[0].rows.item(0)
-            );
-            const blobData = await handleBigData(getStoreID(db_filename, 'main', access_id), value);
-
-            await sqlite.executeSql(
-                SQLITE_COMMANDS.MERGE('main', ['access_id', 'value', 'touched', 'size']),
-                [access_id, blobData, Date.now(), dataSize]
-            );
+            await fs.set('main', access_id, { value, size: dataSize, touched: Date.now() });
             incrementFetcherSize(projectUrl, dataSize - (b4Data?.size || 0));
         });
+        updateCacheStore(['DatabaseStats']);
     }
-
-    updateCacheStore(undefined, ['FetchedStore']);
 }
 
 export const getFetchResources = async (projectUrl, access_id) => {
@@ -63,15 +43,12 @@ export const getFetchResources = async (projectUrl, access_id) => {
         return record && cloneDeep(record?.data);
     }
 
-    const res = await useSqliteLinearAccessId(FETCH_RESOURCES(projectUrl), access_id, 'httpFetch')(async sqlite => {
-        const query = await sqlite.executeSql('SELECT * FROM main WHERE access_id = ?', [access_id]).catch(() => null);
+    const res = await useFS(FETCH_RESOURCES(projectUrl), access_id, 'httpFetch')(async fs => {
+        const query = await fs.find('main', access_id, ['value']).catch(() => null);
+        if (!query) return null;
 
-        const rawData = query && query[0].rows.item(0)?.value;
-        if (!rawData) return null;
-
-        const data = await parseBigData(rawData);
-        await sqlite.executeSql(SQLITE_COMMANDS.UPDATE_COLUMNS('main', ['touched'], 'access_id = ?'), [Date.now(), access_id]);
-        return data;
+        await fs.set('main', access_id, { touched: Date.now() });
+        return query.value;
     });
     return res;
 }

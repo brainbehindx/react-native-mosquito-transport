@@ -2,68 +2,55 @@ import { ServerReachableListener, StoreReadyListener } from "./listeners";
 import { CacheStore, Scoped } from "./variables";
 import { serializeE2E } from "./peripherals";
 import { deserializeBSON, serializeToBase64 } from "../products/database/bson";
-import { trySendPendingWrite } from "../products/database";
 import { deserialize } from "entity-serializer";
-import { openDB, SQLITE_COMMANDS, SQLITE_PATH } from "./sqlite_manager";
 import { purgeRedundantRecords } from "./purger";
-import { getStoreID, handleBigData, parseBigData } from "./fs_manager";
+import { FS_PATH, getSystem } from "./fs_manager";
 
-const { FILE_NAME, TABLE_NAME } = SQLITE_PATH;
+const { FILE_NAME, TABLE_NAME } = FS_PATH;
 
 const CacheKeys = Object.keys(CacheStore);
 
-export const updateCacheStore = (timer = 300, node) => {
+export const updateCacheStore = async (node) => {
     const { io, promoteCache } = Scoped.ReleaseCacheData;
 
-    const doUpdate = async () => {
-        const {
+    const {
+        AuthStore,
+        EmulatedAuth,
+        PendingAuthPurge,
+        DatabaseStore,
+        PendingWrites,
+        ...restStore
+    } = CacheStore;
+
+    if (io) {
+        const txt = JSON.stringify({
             AuthStore,
             EmulatedAuth,
             PendingAuthPurge,
-            DatabaseStore,
-            PendingWrites,
-            ...restStore
-        } = CacheStore;
+            ...promoteCache ? {
+                DatabaseStore: serializeToBase64(DatabaseStore),
+                PendingWrites: serializeToBase64(PendingWrites)
+            } : {},
+            ...promoteCache ? restStore : {}
+        });
 
-        if (io) {
-            const txt = JSON.stringify({
-                AuthStore,
-                EmulatedAuth,
-                PendingAuthPurge,
-                ...promoteCache ? {
-                    DatabaseStore: serializeToBase64(DatabaseStore),
-                    PendingWrites: serializeToBase64(PendingWrites)
-                } : {},
-                ...promoteCache ? restStore : {}
-            });
+        io.output(txt, node);
+    } else {
+        // use fs
+        const exclusion = ['DatabaseStore', 'DatabaseCountResult', 'FetchedStore'];
+        const updationKey = (node ? Array.isArray(node) ? node : [node] : CacheKeys).filter(v => !exclusion.includes(v));
 
-            io.output(txt, node);
-        } else {
-            // use sqlite
-            const exclusion = ['DatabaseStore', 'DatabaseCountResult', 'FetchedStore'];
-            const updationKey = (node ? Array.isArray(node) ? node : [node] : CacheKeys).filter(v => !exclusion.includes(v));
-
-            if (!updationKey.length) return;
-            const sqlite = await openDB(FILE_NAME);
-            await Promise.all(
-                updationKey
-                    .map(v => [v, v === 'PendingWrites' ? serializeToBase64(CacheStore[v]) : CacheStore[v]])
-                    .map(async ([ref, value]) => {
-                        const blobData = await handleBigData(getStoreID(FILE_NAME, TABLE_NAME, ref), value);
-                        return sqlite.executeSql(SQLITE_COMMANDS.MERGE(TABLE_NAME, ['ref', 'value']), [ref, blobData]);
-                    })
-            ).catch(err => {
-                console.error('updateCacheStore err:', err);
-            }).finally(() => {
-                sqlite.close();
-            });
-        }
-    };
-
-    clearTimeout(Scoped.cacheStorageReducer);
-    if (timer) {
-        Scoped.cacheStorageReducer = setTimeout(doUpdate, timer);
-    } else doUpdate();
+        if (!updationKey.length) return;
+        await Promise.all(
+            updationKey
+                .map(v => [v, v === 'PendingWrites' ? serializeToBase64(CacheStore[v]) : CacheStore[v]])
+                .map(([ref, value]) =>
+                    getSystem(FILE_NAME).set(TABLE_NAME, ref, { value })
+                )
+        ).catch(err => {
+            console.error('updateCacheStore err:', err);
+        });
+    }
 };
 
 export const releaseCacheStore = async (builder) => {
@@ -75,19 +62,15 @@ export const releaseCacheStore = async (builder) => {
         if (io) {
             data = JSON.parse((await io.input()) || '{}');
         } else {
-            const sqlite = await openDB(FILE_NAME);
-            await sqlite.executeSql(`CREATE TABLE IF NOT EXISTS ${TABLE_NAME} ( ref TEXT PRIMARY KEY, value BLOB )`).catch(() => null);
             try {
-                const [query] = await sqlite.executeSql(`SELECT * FROM ${TABLE_NAME}`);
+                const query = await getSystem(FILE_NAME).list(TABLE_NAME, ['value']).catch(() => []);
                 data = Object.fromEntries(
-                    await Promise.all(query.rows.raw().map(async v =>
-                        [v.ref, await parseBigData(v.value)]
-                    ))
+                    query.map(([ref, { value }]) =>
+                        [ref, value]
+                    )
                 );
             } catch (error) {
-                console.error('initializeCache sqlite data release err:', error);
-            } finally {
-                sqlite.close();
+                console.error('initializeCache data release err:', error);
             }
         }
         await purgeRedundantRecords(data, builder);
@@ -97,15 +80,11 @@ export const releaseCacheStore = async (builder) => {
 
     Object.entries(data).forEach(([k, v]) => {
         if (['DatabaseStore', 'PendingWrites'].includes(k)) {
-            CacheStore[k] = deserializeBSON(v);
+            CacheStore[k] = deserializeBSON(v, true);
         } else CacheStore[k] = v;
     });
     Object.entries(CacheStore.AuthStore).forEach(([key, value]) => {
         Scoped.AuthJWTToken[key] = value?.token;
-    });
-    Object.keys(CacheStore.PendingWrites).forEach(projectUrl => {
-        if (Scoped.IS_CONNECTED[projectUrl])
-            trySendPendingWrite(projectUrl);
     });
     Scoped.IsStoreReady = true;
     StoreReadyListener.dispatch('_', 'ready');

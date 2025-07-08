@@ -232,13 +232,12 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
 
 const purgeCache = (url, isMain) => {
     if (url in Scoped.AuthJWTToken) delete Scoped.AuthJWTToken[url];
-    Object.keys(CacheStore).forEach(e => {
-        if (
-            e !== 'PendingAuthPurge' &&
-            (!['EmulatedAuth'].includes(e) || isMain)
-        ) {
-            if (CacheStore[e][url]) delete CacheStore[e][url];
-        }
+    [
+        isMain ? 'EmulatedAuth' : undefined,
+        'AuthStore',
+        'PendingWrites'
+    ].forEach(e => {
+        if (e && CacheStore[e]?.[url]) delete CacheStore[e][url];
     });
     TokenRefreshListener.dispatch(url);
     triggerAuthToken(url);
@@ -257,7 +256,7 @@ export const doSignOut = async (builder) => {
     const emulatedURL = CacheStore.EmulatedAuth[builder.projectUrl];
 
     clearCacheForSignout(builder, !emulatedURL);
-    updateCacheStore(0, ['AuthStore', 'EmulatedAuth']);
+    updateCacheStore(['AuthStore', 'EmulatedAuth']);
     if (emulatedURL) return;
     await revokeAuthIntance(builder);
 };
@@ -304,7 +303,7 @@ export const purgePendingToken = async (nodeId) => {
         throw simplifyCaughtError(e).simpleError;
     } finally {
         delete CacheStore.PendingAuthPurge[nodeId];
-        updateCacheStore(0);
+        updateCacheStore(['PendingAuthPurge']);
     }
 };
 

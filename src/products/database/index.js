@@ -2,7 +2,7 @@ import { io } from "socket.io-client";
 import EngineApi from "../../helpers/engine_api";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
 import { deserializeE2E, listenReachableServer, niceTry, serializeE2E } from "../../helpers/peripherals";
-import { awaitStore, buildFetchInterface, buildFetchResult, getReachableServer } from "../../helpers/utils";
+import { awaitStore, buildFetchInterface, buildFetchResult, getReachableServer, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { addPendingWrites, generateRecordID, getCountQuery, getRecord, insertCountQuery, insertRecord, listenQueryEntry, removePendingWrite, validateWriteValue } from "./accessor";
 import { validateCollectionName, validateFilter, validateFindConfig, validateFindObject, validateListenFindConfig } from "./validator";
@@ -396,7 +396,7 @@ const countCollection = async (builder, config) => {
 
             if (e?.simpleError) {
                 finalize(undefined, e.simpleError);
-            } else if (!disableCache && !Validator.NUMBER(b4Data)) {
+            } else if (!disableCache && Validator.NUMBER(b4Data)) {
                 finalize(b4Data);
             } else if (retries > maxRetries) {
                 finalize(undefined, { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
@@ -622,13 +622,14 @@ const commitData = async (builder, value, type, config) => {
     const writeId = `${Date.now() + ++Scoped.PendingIte}`;
     const isBatchWrite = type === 'batchWrite';
     const shouldCache = (delivery !== DELIVERY.DEFAULT || !disableCache) &&
-        ![DELIVERY.NO_CACHE_AWAIT, DELIVERY.NO_CACHE_NO_AWAIT].includes();
+        ![DELIVERY.NO_CACHE_AWAIT, DELIVERY.NO_CACHE_NO_AWAIT].includes(delivery);
 
     await awaitStore();
     if (shouldCache) {
         await addPendingWrites(builder, writeId, { value, type, find, config });
         Scoped.OutgoingWrites[writeId] = true;
-        await Scoped.dispatchingWritesPromise;
+        if (Scoped.dispatchingWritesPromise[projectUrl])
+            await Scoped.dispatchingWritesPromise[projectUrl];
     }
 
     let retries = 0, hasFinalize;
@@ -717,9 +718,9 @@ const commitData = async (builder, value, type, config) => {
 };
 
 export const trySendPendingWrite = (projectUrl) => {
-    if (Scoped.dispatchingWritesPromise) return;
+    if (Scoped.dispatchingWritesPromise[projectUrl]) return;
 
-    Scoped.dispatchingWritesPromise = new Promise(async resolve => {
+    Scoped.dispatchingWritesPromise[projectUrl] = new Promise(async resolve => {
         const sortedWrite = Object.entries(CacheStore.PendingWrites[projectUrl] || {})
             .filter(([k]) => !Scoped.OutgoingWrites[k])
             .sort((a, b) => a[1].addedOn - b[1].addedOn);
@@ -741,7 +742,10 @@ export const trySendPendingWrite = (projectUrl) => {
             }
         }
         resolve();
-        Scoped.dispatchingWritesPromise = undefined;
+        if (projectUrl in Scoped.dispatchingWritesPromise)
+            delete Scoped.dispatchingWritesPromise[projectUrl];
+        updateCacheStore(['PendingWrites']);
+
         if (
             (sortedWrite.length - resolveCounts) &&
             await getReachableServer(projectUrl)

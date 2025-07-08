@@ -8,7 +8,6 @@ export const Scoped = {
     InitializedProject: {},
     ReleaseCacheData: undefined,
     AuthJWTToken: {},
-    cacheStorageReducer: undefined,
     IsStoreReady: false,
     TokenRefreshTimer: {},
     LastTokenRefreshRef: {},
@@ -21,24 +20,12 @@ export const Scoped = {
     /**
      * @type {Promise<any> | undefined}
      */
-    dispatchingWritesPromise: undefined,
-    linearSqliteProcess: {
+    dispatchingWritesPromise: {},
+    linearFsProcess: {
         database: {},
         dbQueryCount: {},
         httpFetch: {}
-    },
-    initedSqliteInstances: {
-        httpFetch: {},
-        dbQueryCount: {},
-        database: {}
     }
-};
-
-export const SqliteCollective = {
-    openedDb: {},
-    openedDbProcess: {},
-    closeDbPromises: {},
-    openedDbReducerTimer: {}
 };
 
 export const CacheStore = {
@@ -62,6 +49,9 @@ export const CacheStore = {
     },
     AuthStore: {},
     PendingAuthPurge: {},
+    /**
+     * [the instance url]: the url been emulated
+     */
     EmulatedAuth: {},
     PendingWrites: {},
     FetchedStore: {}

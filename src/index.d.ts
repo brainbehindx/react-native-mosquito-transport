@@ -96,11 +96,7 @@ interface ReleaseCacheOption_IO {
 
 interface ReleaseCacheOption {
     /**
-     * This key will be used to encrypt sqlite data stored locally
-     */
-    sqliteKey?: string;
-    /**
-     * sqlite is used as the default caching mechanism
+     * fs is used as the default caching mechanism
      * 
      * providing `io` means you want to override this behaviour and handle caching yourself in the system's memory
      */

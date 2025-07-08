@@ -4,6 +4,7 @@ import naclPkg from 'tweetnacl';
 import getLodash from "lodash/get";
 import { deserialize, serialize } from "entity-serializer";
 import { sha256 } from 'react-native-sha256';
+import { purifyFilepath } from "./fs_manager";
 
 const { box, randomBytes } = naclPkg;
 
@@ -66,9 +67,8 @@ export function sortArrayByObjectKey(arr = [], key) {
 };
 
 export async function niceHash(str = '') {
-    const hash = await sha256(str);
-    if (hash.length > str.length) return encodeBinary(str);
-    return hash;
+    const hash = Buffer.from(await sha256(str), 'hex').toString('base64');
+    return purifyFilepath(hash);
 };
 
 export const sameInstance = (var1, var2) => {

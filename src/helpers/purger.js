@@ -1,11 +1,16 @@
-import { openDB, SQLITE_COMMANDS, SQLITE_PATH } from "./sqlite_manager";
 import { Validator } from "guard-object";
 import { incrementDatabaseSizeCore } from "../products/database/counter";
 import { incrementFetcherSizeCore } from "../products/http_callable/counter";
 import unsetLodash from 'lodash/unset';
-import { deleteBigData, getStoreID } from "./fs_manager";
+import { FS_PATH, getSystem } from "./fs_manager";
 
-const { LIMITER_DATA, LIMITER_RESULT, DB_COUNT_QUERY, FETCH_RESOURCES } = SQLITE_PATH;
+const { LIMITER_DATA, LIMITER_RESULT, DB_COUNT_QUERY, FETCH_RESOURCES } = FS_PATH;
+
+const inlineFsData = (arr, access_id_node = 'access_id') =>
+    arr.map(([access_id, obj]) => {
+        obj[access_id_node] = access_id;
+        return obj;
+    });
 
 export const purgeRedundantRecords = async (data, builder) => {
     const { io, maxLocalDatabaseSize = 10485760, maxLocalFetchHttpSize = 10485760 } = builder;
@@ -145,28 +150,24 @@ export const purgeRedundantRecords = async (data, builder) => {
                         instances.map(async obj => {
                             const { builder, isCounter, path } = obj;
 
-                            const sqlite = await openDB(builder);
-
                             try {
                                 if (isCounter) {
-                                    const data = await sqlite.executeSql(`SELECT * FROM ${DB_COUNT_QUERY(path)}`).then(r =>
-                                        r[0].rows.raw()
+                                    const data = inlineFsData(
+                                        await getSystem(builder).list(DB_COUNT_QUERY(path), ['size', 'touched'])
                                     );
                                     return data.map(v => [v, obj]);
                                 }
 
                                 const [instanceData, resultData] = await Promise.all([
-                                    sqlite.executeSql(`SELECT access_id, touched, size FROM ${LIMITER_DATA(path)}`),
-                                    sqlite.executeSql(`SELECT access_id_limiter, touched, size FROM ${LIMITER_RESULT(path)}`)
+                                    getSystem(builder).list(LIMITER_DATA(path), ['touched', 'size']).catch(() => []),
+                                    getSystem(builder).list(LIMITER_RESULT(path), ['touched', 'size']).catch(() => [])
                                 ]).then(r =>
-                                    r.map(v => v[0].rows.raw())
+                                    r.map((v, i) => inlineFsData(v, i ? 'access_id_limiter' : 'access_id'))
                                 );
                                 return [...instanceData, ...resultData].map(v => [v, obj]);
                             } catch (error) {
                                 console.error('redundantDbRanking err:', error);
                                 return [];
-                            } finally {
-                                sqlite.close();
                             }
                         })
                     ).then(r =>
@@ -186,22 +187,15 @@ export const purgeRedundantRecords = async (data, builder) => {
 
                     console.warn(`purging ${cuts} of ${redundantDbRanking.length} db entities`);
                     await Promise.all(redundantDbRanking.slice(0, cuts).map(async ([v, { builder, isCounter, path }]) => {
-                        let db_filename;
-                        const sqlite = await openDB(builder, n => db_filename = n);
                         try {
                             const table = (isCounter ? DB_COUNT_QUERY : 'access_id_limiter' in v ? LIMITER_RESULT : LIMITER_DATA)(path);
                             const id_field = 'access_id_limiter' in v ? 'access_id_limiter' : 'access_id';
                             const primary_key = v[id_field];
-
-                            await Promise.all([
-                                sqlite.executeSql(SQLITE_COMMANDS.DELETE_ROW(table, `${id_field} = ?`), [primary_key]),
-                                deleteBigData(getStoreID(db_filename, table, primary_key)).catch(() => null)
-                            ]);
+                            await getSystem(builder).delete(table, primary_key);
                             if (!isCounter) incrementDatabaseSizeCore(data.DatabaseStats, builder, path, -v.size);
                         } catch (error) {
                             console.log('db redundantClearing err:', error);
                         }
-                        sqlite.close();
                     }));
                     console.log('database purging complete');
                 } catch (error) {
@@ -212,13 +206,12 @@ export const purgeRedundantRecords = async (data, builder) => {
                 try {
                     if (!Validator.POSITIVE_NUMBER(_fetcher_size) || !maxLocalFetchHttpSize || _fetcher_size < maxLocalFetchHttpSize) return;
 
-                    const redundantFetchRanking = await Promise.all(Object.entries(fetchers).map(async ([projectUrl]) => {
-                        const sqlite = await openDB(FETCH_RESOURCES(projectUrl));
-                        const data = await sqlite.executeSql('SELECT access_id, touched, size FROM main').then(r =>
-                            r[0].rows.raw()
-                        );
-                        return data.map(v => [v, projectUrl]);
-                    })).then(r =>
+                    const redundantFetchRanking = await Promise.all(
+                        Object.entries(fetchers).map(async ([projectUrl]) => {
+                            const data = inlineFsData(await getSystem(FETCH_RESOURCES(projectUrl)).list('main', ['touched', 'size']));
+                            return data.map(v => [v, projectUrl]);
+                        })
+                    ).then(r =>
                         r.flat().sort(([a], [b]) =>
                             a.touched - b.touched
                         )
@@ -236,19 +229,12 @@ export const purgeRedundantRecords = async (data, builder) => {
 
                     console.warn(`purging ${cuts} of ${redundantFetchRanking.length} fetcher entities`);
                     await Promise.all(redundantFetchRanking.slice(0, cuts).map(async ([v, projectUrl]) => {
-                        let db_filename;
-                        const sqlite = await openDB(FETCH_RESOURCES(projectUrl), n => db_filename = n);
-
                         try {
-                            await Promise.all([
-                                sqlite.executeSql(SQLITE_COMMANDS.DELETE_ROW('main', 'access_id = ?'), [v.access_id]),
-                                deleteBigData(getStoreID(db_filename, 'main', v.access_id)).catch(() => null)
-                            ]);
+                            await getSystem(FETCH_RESOURCES(projectUrl)).delete('main', v.access_id);
                             incrementFetcherSizeCore(data.DatabaseStats, projectUrl, -v.size);
                         } catch (error) {
-                            console.log('fetcher redundantClearing err:', error);
+                            console.log('fetcher redundantClearing err:', error, ' obj:', v, ' projectUrl:', projectUrl);
                         }
-                        sqlite.close();
                     }));
                     console.log('fetcher purging complete');
                 } catch (error) {
@@ -269,7 +255,3 @@ const breakDbMap = (obj, callback) =>
             });
         });
     });
-
-export const purgeInstance = (projectUrl) => {
-    // TODO: purge when signed-out
-}

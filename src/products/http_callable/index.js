@@ -106,7 +106,7 @@ export const mfetch = async (input = '', init, config) => {
 
         await awaitStore();
         const resolveCache = (reqData) => {
-            finalize(buildFetchData(reqData), { fromCache: true });
+            finalize(buildFetchData(reqData, { fromCache: true }));
         };
 
         try {

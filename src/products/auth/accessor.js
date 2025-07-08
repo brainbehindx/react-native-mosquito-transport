@@ -23,7 +23,7 @@ export const injectFreshToken = async (config, { token, refreshToken }) => {
     const isEmulated = projectUrl in CacheStore.EmulatedAuth;
     if (isEmulated) delete CacheStore.EmulatedAuth[projectUrl];
 
-    updateCacheStore(0, ['AuthStore', isEmulated ? 'EmulatedAuth' : ''].filter(v => v));
+    updateCacheStore(['AuthStore', isEmulated ? 'EmulatedAuth' : ''].filter(v => v));
 
     triggerAuthToken(projectUrl);
     initTokenRefresher(config);
@@ -47,7 +47,7 @@ export const injectEmulatedAuth = async (config, emulatedURL) => {
     Scoped.AuthJWTToken[projectUrl] = token;
     CacheStore.EmulatedAuth[projectUrl] = emulatedURL;
 
-    updateCacheStore(0, ['AuthStore', 'EmulatedAuth']);
+    updateCacheStore(['AuthStore', 'EmulatedAuth']);
     triggerAuthToken(projectUrl);
     initTokenRefresher(config);
 };
@@ -161,7 +161,7 @@ const refreshToken = (builder, processRef, remainRetries = 1, isForceRefresh) =>
                 triggerAuthToken(v, isInit);
                 if (isForceRefresh) Scoped.InitiatedForcedToken[v] = true;
             });
-            updateCacheStore(0, ['AuthStore']);
+            updateCacheStore(['AuthStore']);
             initTokenRefresher(builder);
         } else reject(lostProcess.simpleError);
     } catch (e) {

@@ -1,27 +1,82 @@
+import { Scoped } from "./variables";
 import { Platform } from "react-native";
-import { Buffer } from 'buffer';
-import { deserialize, serialize } from 'entity-serializer';
-import { writeFile, mkdir, MainBundlePath, readFile, unlink, DocumentDirectoryPath } from "react-native-fs";
+import { Dirs, FileSystem } from "react-native-file-access";
 
-const MAX_INLINE_BLOB = 1024;
+const PARENT_FOLDER = `${Platform.OS === 'android' ? Dirs.DocumentDir.split('/').slice(0, -1).join('/') : Dirs.MainBundleDir}/mosquito_base`;
 
-const DIR_PATH = `${Platform.OS === 'android' ? DocumentDirectoryPath.split('/').slice(0, -1).join('/').concat('/databases') : MainBundlePath}/MOSQUITO`;
-const resolvePath = (path = '') => `${DIR_PATH}${path.startsWith('/') ? path : '/' + path}`;
+/**
+ * this method linearize read/write for individual access_id on the file system ensuring consistency across concurrent operations
+ * 
+ * @param {any} builder 
+ * @param {string} access_id 
+ * @param {string} node 
+ * @returns {(task: (system: { set: (table: string, primary_key: string, value: {}) => Promise<void>, delete: (table: string, primary_key: string) => Promise<void>, find: (table: string, primary_key: string, extractions: string[]) => Promise<{}>, list: (table: string, extractions: string[]) => Promise<[string, {}][]> }) => any) => Promise<any>}
+ */
+export const useFS = (builder, access_id, node) => async (task) => {
+    const { projectUrl, dbUrl, dbName } = builder;
+    const nodeId = typeof builder === 'string' ? `${builder}_${access_id}` : `${projectUrl}_${dbUrl}_${dbName}_${access_id}`;
 
-const DIR_CREATION_PROMISE = mkdir(DIR_PATH).catch(() => null);
+    const thatProcess = Scoped.linearFsProcess[node][nodeId];
 
-const fsWrite = async (path, data) => {
-    await DIR_CREATION_PROMISE;
-    return writeFile(resolvePath(path), data instanceof Buffer ? data.toString('base64') : data, 'base64');
-}
+    const thisPromise = new Promise(async (resolve, reject) => {
+        try {
+            if (thatProcess !== undefined) await thatProcess;
+        } catch (_) { }
+        try {
+            resolve(await task(getSystem(builder)));
+        } catch (error) {
+            console.error('useFS err:', error, ' builder:', builder);
+            reject(error);
+        } finally {
+            if (Scoped.linearFsProcess[node][nodeId] === thisPromise)
+                delete Scoped.linearFsProcess[node][nodeId];
+        }
+    });
 
-const fsRead = async (path) => {
-    await DIR_CREATION_PROMISE;
-    return Buffer.from(await readFile(resolvePath(path), 'base64'), 'base64');
-}
+    Scoped.linearFsProcess[node][nodeId] = thisPromise;
+    return (await thisPromise);
+};
 
-const purifyFilename = (filename) => {
-    if (!filename || typeof filename !== 'string') return 'unnamed';
+export const getSystem = (builder) => {
+    const { projectUrl, dbUrl, dbName } = builder;
+
+    const DIR_PATH = joinPath(PARENT_FOLDER, purifyFilepath(typeof builder === 'string' ? builder : `${projectUrl}_${dbUrl}_${dbName}`));
+    const conjoin = (...args) => joinPath(DIR_PATH, ...args);
+
+    return {
+        set: async (table, primary_key, value) => {
+            const path = conjoin(table, primary_key);
+            await FileSystem.mkdir(path).catch(() => null);
+            await Promise.all(Object.entries(value).map(([k, v]) =>
+                FileSystem.writeFile(joinPath(path, k), JSON.stringify(v), 'utf8')
+            ));
+        },
+        delete: (table, primary_key) => FileSystem.unlink(conjoin(table, primary_key)),
+        find: async (table, primary_key, extractions) => {
+            const path = conjoin(table, primary_key);
+
+            const value_map = await Promise.all(extractions.map(async node =>
+                [node, JSON.parse(await FileSystem.readFile(joinPath(path, node), 'utf8'))]
+            ));
+            return Object.fromEntries(value_map);
+        },
+        list: async (table, extractions) => {
+            const names = await FileSystem.ls(conjoin(table));
+            const list_data = await Promise.all(names.map(async primary_key => {
+                const obj = await getSystem(builder).find(table, primary_key, extractions)
+                    .catch(() => null);
+                if (!obj) return;
+                return [primary_key, obj];
+            }));
+
+            return list_data.filter(v => v);
+        }
+    };
+};
+
+export function purifyFilepath(filename) {
+    if (!filename || typeof filename !== 'string')
+        throw `invalid filename:${filename}`;
 
     // Remove invalid characters for both iOS and Android
     return filename
@@ -29,27 +84,21 @@ const purifyFilename = (filename) => {
         .trim(); // Remove leading/trailing whitespace
 }
 
-export const getStoreID = (db_filename, table, primary_key) => purifyFilename(`${table}_${primary_key}_${db_filename}.blob`);
+function joinPath(...args) {
+    return args.map((v, i) => {
+        if (i && v.startsWith('/'))
+            v = v.slice(1);
+        if (v.endsWith('/'))
+            v = v.slice(0, -1);
+        return v;
+    }).join('/');
+}
 
-export const deleteBigData = (store_id) => unlink(resolvePath(store_id));
-
-export const handleBigData = async (store_id, data) => {
-    const bufData = serialize(data);
-    if (bufData.byteLength <= MAX_INLINE_BLOB) {
-        return serialize([bufData]).toString('base64');
-    }
-    await fsWrite(store_id, bufData);
-    return serialize([undefined, store_id]).toString('base64');
-};
-
-export const parseBigData = async (result) => {
-    const [inline, store_id] = deserialize(Buffer.from(result, 'base64'));
-    if (store_id) {
-        try {
-            return deserialize(await fsRead(store_id));
-        } catch (error) {
-            throw `Referenced local file is either corrupted or deleted, Error: ${error}`;
-        }
-    }
-    return deserialize(inline);
+export const FS_PATH = {
+    FILE_NAME: 'MOSQUITO_TRANSPORT',
+    TABLE_NAME: 'MT_MAIN',
+    LIMITER_RESULT: path => `${purifyFilepath(encodeURIComponent(path))}_LR`,
+    LIMITER_DATA: path => `${purifyFilepath(encodeURIComponent(path))}_LD`,
+    DB_COUNT_QUERY: path => `${purifyFilepath(encodeURIComponent(path))}_QC`,
+    FETCH_RESOURCES: projectUrl => `FR_${purifyFilepath(encodeURIComponent(projectUrl))}`
 };

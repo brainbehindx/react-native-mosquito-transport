@@ -12,10 +12,9 @@ import { niceGuard, Validator } from "guard-object";
 import { TIMESTAMP } from "../..";
 import { docSize, incrementDatabaseSize } from "./counter";
 import { deserializeBSON, serializeToBase64 } from "./bson";
-import { openDB, SQLITE_COMMANDS, SQLITE_PATH, useSqliteLinearAccessId } from "../../helpers/sqlite_manager";
-import { getStoreID, handleBigData, parseBigData } from "../../helpers/fs_manager";
+import { FS_PATH, getSystem, useFS } from "../../helpers/fs_manager";
 
-const { LIMITER_DATA, LIMITER_RESULT, DB_COUNT_QUERY } = SQLITE_PATH;
+const { LIMITER_DATA, LIMITER_RESULT, DB_COUNT_QUERY } = FS_PATH;
 
 export const listenQueryEntry = (callback, { accessId, builder, config, processId }) => {
     const { projectUrl, dbName, dbUrl, path } = builder;
@@ -50,28 +49,14 @@ export const insertCountQuery = async (builder, access_id, value) => {
     const { io } = Scoped.ReleaseCacheData;
     if (io) {
         setLodash(CacheStore.DatabaseCountResult, [projectUrl, dbUrl, dbName, path, access_id], { value, touched: Date.now() });
+        updateCacheStore(['DatabaseCountResult']);
     } else {
-        const initNode = `${projectUrl}_${dbUrl}_${dbName}_${path}`;
-        await useSqliteLinearAccessId(builder, access_id, 'dbQueryCount')(async sqlite => {
-            if (!Scoped.initedSqliteInstances.dbQueryCount[initNode]) {
-                Scoped.initedSqliteInstances.dbQueryCount[initNode] = (async () => {
-                    await sqlite.executeSql(`CREATE TABLE IF NOT EXISTS ${DB_COUNT_QUERY(path)} ( access_id TEXT PRIMARY KEY, value TEXT, touched INTEGER )`).catch(() => null);
-                    await Promise.allSettled([
-                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(DB_COUNT_QUERY(path), ['access_id'])),
-                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(DB_COUNT_QUERY(path), ['touched']))
-                    ]);
-                })();
-            }
-
-            await Scoped.initedSqliteInstances.dbQueryCount[initNode];
-            await sqlite.executeSql(
-                SQLITE_COMMANDS.MERGE(DB_COUNT_QUERY(path), ['access_id', 'value', 'touched']),
-                [access_id, JSON.stringify(value), Date.now()]
-            );
+        await useFS(builder, access_id, 'dbQueryCount')(async fs => {
+            await fs.set(DB_COUNT_QUERY(path), access_id, { value, touched: Date.now() });
             setLodash(CacheStore.DatabaseStats.counters, [projectUrl, dbUrl, dbName, path], true);
         });
+        updateCacheStore(['DatabaseStats']);
     }
-    updateCacheStore(undefined, ['DatabaseCountResult'])
 }
 
 export const getCountQuery = async (builder, access_id) => {
@@ -83,14 +68,13 @@ export const getCountQuery = async (builder, access_id) => {
         if (data) data.touched = Date.now();
         return data && data.value;
     } else {
-        const result = await useSqliteLinearAccessId(builder, access_id, 'dbQueryCount')(sqlite =>
-            sqlite.executeSql(`SELECT * FROM ${DB_COUNT_QUERY(path)} WHERE access_id = ?`, [access_id]).then(async r => {
-                r = JSON.parse(r[0].rows.item(0).value);
-                await sqlite.executeSql(SQLITE_COMMANDS.UPDATE_COLUMNS(DB_COUNT_QUERY(path), ['touched'], 'access_id = ?'), [Date.now(), access_id]);
-                return r;
-            }).catch(() => undefined)
-        );
-        return result;
+        return useFS(builder, access_id, 'dbQueryCount')(async fs => {
+            const data = await fs.find(DB_COUNT_QUERY(path), access_id, ['value']).catch(() => null);
+            if (data) {
+                await fs.set(DB_COUNT_QUERY(path), access_id, { touched: Date.now() });
+                return data.value;
+            }
+        });
     }
 }
 
@@ -106,35 +90,13 @@ export const insertRecord = async (builder, config, accessIdWithoutLimit, value,
     const thisSize = docSize(value);
 
     if (!io) {
-        await useSqliteLinearAccessId(builder, accessIdWithoutLimit, 'database')(async (sqlite, db_filename) => {
-            const initNode = `${projectUrl}_${dbUrl}_${dbName}_${path}`;
-
-            if (!Scoped.initedSqliteInstances.database[initNode]) {
-                Scoped.initedSqliteInstances.database[initNode] = (async () => {
-                    await Promise.allSettled([
-                        sqlite.executeSql(`CREATE TABLE IF NOT EXISTS ${LIMITER_DATA(path)} ( access_id TEXT PRIMARY KEY, value BLOB, touched INTEGER, size INTEGER )`),
-                        sqlite.executeSql(`CREATE TABLE IF NOT EXISTS ${LIMITER_RESULT(path)} ( access_id_limiter TEXT PRIMARY KEY, access_id TEXT, value BLOB, touched INTEGER, size INTEGER )`)
-                    ]);
-
-                    await Promise.allSettled([
-                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_DATA(path), ['access_id'])),
-                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_DATA(path), ['touched'])),
-                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_RESULT(path), ['access_id_limiter'])),
-                        // sqlite.executeSql(SQLITE_COMMANDS.CREATE_INDEX(LIMITER_RESULT(path), ['touched']))
-                    ]);
-                })();
-            }
-
-            await Scoped.initedSqliteInstances.database[initNode];
-
+        await useFS(builder, accessIdWithoutLimit, 'database')(async fs => {
             const resultAccessId = `${accessIdWithoutLimit}-${limit}`;
 
             const [instanceData, resultData] = await Promise.all([
-                sqlite.executeSql(`SELECT access_id, size FROM ${LIMITER_DATA(path)} WHERE access_id = ?`, [accessIdWithoutLimit]),
-                sqlite.executeSql(`SELECT access_id_limiter, size FROM ${LIMITER_RESULT(path)} WHERE access_id_limiter = ?`, [resultAccessId])
-            ]).then(r =>
-                r.map(v => v[0].rows.item(0))
-            );
+                fs.find(LIMITER_DATA(path), accessIdWithoutLimit, ['size']).catch(() => undefined),
+                fs.find(LIMITER_RESULT(path), resultAccessId, ['size']).catch(() => undefined)
+            ]);
             const isEpisode = episode === 1 || !!resultData;
 
             const editionSizeOffset = thisSize - (instanceData?.size || 0);
@@ -151,27 +113,24 @@ export const insertRecord = async (builder, config, accessIdWithoutLimit, value,
                 data: value,
                 size: thisSize
             });
-            const [blobData, episodeBlobData] = await Promise.all([
-                handleBigData(getStoreID(db_filename, LIMITER_DATA(path), accessIdWithoutLimit), newData),
-                isEpisode ?
-                    handleBigData(getStoreID(db_filename, LIMITER_RESULT(path), resultAccessId), newResultData)
-                    : Promise.resolve()
-            ]);
 
             await Promise.all([
-                sqlite.executeSql(
-                    SQLITE_COMMANDS.MERGE(LIMITER_DATA(path), ['access_id', 'value', 'touched', 'size']),
-                    [accessIdWithoutLimit, blobData, Date.now(), thisSize]
-                ),
+                fs.set(LIMITER_DATA(path), accessIdWithoutLimit, {
+                    value: newData,
+                    touched: Date.now(),
+                    size: thisSize
+                }),
                 isEpisode ?
-                    sqlite.executeSql(
-                        SQLITE_COMMANDS.MERGE(LIMITER_RESULT(path), ['access_id_limiter', 'access_id', 'value', 'touched', 'size']),
-                        [resultAccessId, accessIdWithoutLimit, episodeBlobData, Date.now(), thisSize]
-                    ) : Promise.resolve()
+                    fs.set(LIMITER_RESULT(path), resultAccessId, {
+                        access_id: accessIdWithoutLimit,
+                        value: newResultData,
+                        touched: Date.now(),
+                        size: thisSize
+                    }) : Promise.resolve()
             ]);
             incrementDatabaseSize(builder, path, editionSizeOffset + resultSizeOffset);
         });
-        updateCacheStore(undefined, ['DatabaseStore', 'DatabaseStats']);
+        updateCacheStore(['DatabaseStats']);
         return;
     }
 
@@ -200,7 +159,7 @@ export const insertRecord = async (builder, config, accessIdWithoutLimit, value,
 
     setLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'instance', accessIdWithoutLimit], newData);
     if (isEpisode) setLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'episode', accessIdWithoutLimit, limit], cloneDeep(newResultData));
-    updateCacheStore(undefined, ['DatabaseStore', 'DatabaseStats']);
+    updateCacheStore(['DatabaseStore', 'DatabaseStats']);
 };
 
 export const getRecord = async (builder, accessIdWithoutLimit, episode = 0) => {
@@ -231,19 +190,19 @@ export const getRecord = async (builder, accessIdWithoutLimit, episode = 0) => {
     }
 
     if (!io) {
-        const record = await useSqliteLinearAccessId(builder, accessIdWithoutLimit, 'database')(async sqlite => {
+        const record = await useFS(builder, accessIdWithoutLimit, 'database')(async fs => {
             const resultAccessId = `${accessIdWithoutLimit}-${limit}`;
 
             const qData = await (
-                isEpisode ? sqlite.executeSql(`SELECT * FROM ${LIMITER_RESULT(path)} WHERE access_id_limiter = ?`, [resultAccessId]) :
-                    sqlite.executeSql(`SELECT * FROM ${LIMITER_DATA(path)} WHERE access_id = ?`, [accessIdWithoutLimit])
-            ).then(v => v[0].rows.item(0)).catch(() => null);
-            const thisData = qData && deserializeBSON(await parseBigData(qData.value), true);
+                isEpisode ? fs.find(LIMITER_RESULT(path), resultAccessId, ['value']) :
+                    fs.find(LIMITER_DATA(path), accessIdWithoutLimit, ['value'])
+            ).catch(() => null);
+            const thisData = qData && deserializeBSON(qData.value, true);
 
             if (!thisData) return null;
 
             if (isEpisode) {
-                await sqlite.executeSql(SQLITE_COMMANDS.UPDATE_COLUMNS(LIMITER_RESULT(path), ['touched'], 'access_id_limiter = ?'), [Date.now(), resultAccessId]);
+                await fs.set(LIMITER_RESULT(path), resultAccessId, { touched: Date.now() });
                 return [thisData.data];
             }
 
@@ -253,7 +212,7 @@ export const getRecord = async (builder, accessIdWithoutLimit, episode = 0) => {
                 latest_limiter === undefined ||
                 (Validator.POSITIVE_NUMBER(limit) && latest_limiter >= limit)
             ) {
-                await sqlite.executeSql(SQLITE_COMMANDS.UPDATE_COLUMNS(LIMITER_DATA(path), ['touched'], 'access_id = ?'), [Date.now(), accessIdWithoutLimit]);
+                await fs.set(LIMITER_DATA(path), accessIdWithoutLimit, { touched: Date.now() });
                 return [transformData(data)];
             }
         });
@@ -457,46 +416,28 @@ export const addPendingWrites = async (builder, writeId, result) => {
                     )
                 );
         } else {
-            const sqlite = await openDB(builder);
-            try {
-                const colListing = await sqlite.executeSql(`SELECT access_id FROM ${LIMITER_DATA(path)}`).then(v =>
-                    v[0].rows.raw().map(d => d.access_id)
-                ).catch(() => []);
-                const pathFinder = {};
+            const colListing = await getSystem(builder).list(LIMITER_DATA(path), []).catch(() => []);
+            const pathFinder = {};
 
-                await Promise.all(colListing.map(async access_id =>
-                    useSqliteLinearAccessId(builder, access_id, 'database')(async (sqlite, db_filename) => {
-                        const data = await sqlite.executeSql(`SELECT * FROM ${LIMITER_DATA(path)} WHERE access_id = ?`, [access_id]).then(async v => {
-                            const d = v[0].rows.item(0);
-                            return [d.access_id, deserializeBSON(await parseBigData(d.value), true)];
-                        });
-                        await MutateDataInstance(data, path =>
-                            pathFinder[path] || (
-                                pathFinder[path] = sqlite.executeSql(`SELECT value FROM ${LIMITER_DATA(path)}`).then(v =>
-                                    Promise.all(
-                                        v[0].rows.raw().map(async d =>
-                                            deserializeBSON(await parseBigData(d.value), true).data
-                                        )
-                                    ).then(r => r.flat())
-                                ).catch(() => [])
-                            )
-                        );
-                        const editedBlobData = await handleBigData(
-                            getStoreID(db_filename, LIMITER_DATA(path), access_id),
-                            serializeToBase64(data[1])
-                        );
+            await Promise.all(colListing.map(async ([access_id]) =>
+                useFS(builder, access_id, 'database')(async fs => {
+                    const data = await fs.find(LIMITER_DATA(path), access_id, ['value'])
+                        .then(r => deserializeBSON(r.value, true));
 
-                        await sqlite.executeSql(
-                            SQLITE_COMMANDS.MERGE(LIMITER_DATA(path), ['access_id', 'value', 'touched', 'size']),
-                            [access_id, editedBlobData, Date.now(), data[1].size]
-                        );
-                    })
-                ));
-            } catch (error) {
-                throw error;
-            } finally {
-                sqlite.close();
-            }
+                    await MutateDataInstance([access_id, data], path =>
+                        pathFinder[path] || (
+                            pathFinder[path] = fs.list(LIMITER_DATA(path), ['value'])
+                                .then(v => v.map(d => deserializeBSON(d[1].value, true).data).flat())
+                                .catch(() => [])
+                        )
+                    );
+                    await fs.set(LIMITER_DATA(path), access_id, {
+                        touched: Date.now(),
+                        value: serializeToBase64(data),
+                        size: data.size
+                    });
+                })
+            ));
         }
 
         async function MutateDataInstance([entityId, dataObj], pathGetter) {
@@ -706,7 +647,7 @@ export const addPendingWrites = async (builder, writeId, result) => {
         addedOn: Date.now()
     }));
 
-    updateCacheStore(undefined, ['DatabaseStore', 'PendingWrites', 'DatabaseStats']);
+    updateCacheStore(['DatabaseStore', 'PendingWrites', 'DatabaseStats']);
     notifyDatabaseNodeChanges(builder, [...pathChanges]);
 };
 
@@ -724,22 +665,17 @@ export const removePendingWrite = async (builder, writeId, revert) => {
             if (io) {
                 RevertMutation(getLodash(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'instance', access_id]));
             } else {
-                await useSqliteLinearAccessId(builder, access_id, 'database')(async (sqlite, db_filename) => {
-                    const colObj = await sqlite.executeSql(`SELECT * FROM ${LIMITER_DATA(path)} WHERE access_id = ?`, [access_id]).then(async v => {
-                        const d = v[0].rows.item(0);
-                        return deserializeBSON(await parseBigData(d.value));
-                    }).catch(() => null);
+                await useFS(builder, access_id, 'database')(async fs => {
+                    const colObj = await fs.find(LIMITER_DATA(path), access_id, ['value'])
+                        .then(v => deserializeBSON(v.value, true))
+                        .catch(() => null);
                     if (!colObj) return;
                     RevertMutation(colObj);
-                    const revertedBlobData = await handleBigData(
-                        getStoreID(db_filename, LIMITER_DATA(path), access_id),
-                        serializeToBase64(colObj)
-                    );
-
-                    await sqlite.executeSql(
-                        SQLITE_COMMANDS.MERGE(LIMITER_DATA(path), ['access_id', 'value', 'touched', 'size']),
-                        [access_id, revertedBlobData, Date.now(), colObj.size]
-                    );
+                    await fs.set(LIMITER_DATA(path), access_id, {
+                        value: serializeToBase64(colObj),
+                        touched: Date.now(),
+                        size: colObj.size
+                    });
                 });
             }
 
@@ -782,7 +718,7 @@ export const removePendingWrite = async (builder, writeId, revert) => {
     }
 
     unsetLodash(CacheStore.PendingWrites, [projectUrl, writeId]);
-    updateCacheStore(undefined, ['PendingWrites', 'DatabaseStore', 'DatabaseStats']);
+    updateCacheStore(['PendingWrites', 'DatabaseStore', 'DatabaseStats']);
     notifyDatabaseNodeChanges(builder, [...pathChanges]);
 };
 

@@ -82,7 +82,7 @@ class RNMT {
                 if (queuedToken) updateMountedToken(queuedToken.token);
                 ServerReachableListener.dispatch(projectUrl, true);
                 awaitStore().then(() => {
-                    trySendPendingWrite(projectUrl);
+                    if (isConnected) trySendPendingWrite(projectUrl);
                 });
             };
             const onDisconnect = () => {
@@ -419,10 +419,7 @@ const discloseSocketArguments = (args = []) => {
 
 const validateReleaseCacheProp = (prop) => {
     Object.entries(prop).forEach(([k, v]) => {
-        if (k === 'sqliteKey') {
-            if (typeof v !== 'string' || v.trim().length <= 0)
-                throw `Invalid value supplied to "sqliteKey", value must be a string and greater than 0 characters`;
-        } else if (k === 'io') {
+        if (k === 'io') {
             Object.entries(v).forEach(([k, v]) => {
                 if (k === 'input' || k === 'output') {
                     if (typeof v !== 'function')
