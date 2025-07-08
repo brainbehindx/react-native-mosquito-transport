@@ -1,10 +1,10 @@
 import { Buffer } from "buffer";
 import { ServerReachableListener } from "./listeners";
 import naclPkg from 'tweetnacl';
-import getLodash from "lodash/get";
 import { deserialize, serialize } from "entity-serializer";
 import { sha256 } from 'react-native-sha256';
 import { purifyFilepath } from "./fs_manager";
+import { grab } from "poke-object";
 
 const { box, randomBytes } = naclPkg;
 
@@ -59,8 +59,8 @@ export const shuffleArray = (n) => {
 
 export function sortArrayByObjectKey(arr = [], key) {
     return arr.sort(function (a, b) {
-        const left = getLodash(a, key),
-            right = getLodash(b, key);
+        const left = grab(a, key),
+            right = grab(b, key);
 
         return (left > right) ? 1 : (left < right) ? -1 : 0;
     });

@@ -1,9 +1,9 @@
 import { guardArray, GuardError, guardObject, GuardSignal, niceGuard, Validator } from "guard-object";
 import { sameInstance } from "../../helpers/peripherals";
 import { RETRIEVAL } from "../../helpers/values";
-import getLodash from 'lodash/get';
 import { Binary, BSONRegExp, BSONSymbol, Code, DBRef, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp, UUID } from 'bson/lib/bson.rn.cjs';
 import { bboxPolygon, booleanIntersects, booleanWithin, circle, distance, polygon } from "@turf/turf";
+import { grab } from "poke-object";
 
 const DirectionList = [1, -1, 'asc', 'desc', 'ascending', 'descending'];
 const FilterFootPrint = t => {
@@ -65,7 +65,7 @@ export const assignExtractionFind = (data, find) => {
     if (!find) return find;
 
     if (niceGuard({ $dynamicValue: GuardSignal.NON_EMPTY_STRING }, find)) {
-        return getLodash(data, find.$dynamicValue) || null;
+        return grab(data, find.$dynamicValue) || null;
     } else if (Validator.OBJECT(find)) {
         return Object.fromEntries(
             Object.entries(find).map(([k, v]) =>
@@ -356,7 +356,7 @@ const FilterUtils = {
         let { $field, $search, $caseSensitive } = q;
 
         $field = (Array.isArray($field) ? $field : [$field]).map(v => {
-            const f = getLodash({ ...parent }, v);
+            const f = grab({ ...parent }, v);
             return typeof f === 'string' ? f : '';
         }).join(' ');
 
@@ -512,7 +512,7 @@ const evaluateFilter = (data, filter = {}, parentData, level = 0) => {
 
         let thisData;
         try {
-            thisData = data && getLodash(data, key);
+            thisData = data && grab(data, key);
         } catch (_) { }
 
         if (key === '$text' && !level) {

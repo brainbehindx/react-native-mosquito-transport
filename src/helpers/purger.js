@@ -1,8 +1,8 @@
 import { Validator } from "guard-object";
 import { incrementDatabaseSizeCore } from "../products/database/counter";
 import { incrementFetcherSizeCore } from "../products/http_callable/counter";
-import unsetLodash from 'lodash/unset';
 import { FS_PATH, getSystem } from "./fs_manager";
+import { unpoke } from "poke-object";
 
 const { LIMITER_DATA, LIMITER_RESULT, DB_COUNT_QUERY, FETCH_RESOURCES } = FS_PATH;
 
@@ -86,13 +86,13 @@ export const purgeRedundantRecords = async (data, builder) => {
             }) => {
                 const { projectUrl, dbUrl, dbName } = builder;
                 if (isCount) {
-                    unsetLodash(data.DatabaseCountResult, [projectUrl, dbUrl, dbName, path, access_id]);
+                    unpoke(data.DatabaseCountResult, [projectUrl, dbUrl, dbName, path, access_id]);
                 } else {
                     incrementDatabaseSizeCore(data.DatabaseStats, builder, path, -size);
                     if (isEpisode) {
-                        unsetLodash(data.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'episode', access_id, limit]);
+                        unpoke(data.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'episode', access_id, `${limit}`]);
                     } else {
-                        unsetLodash(data.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'instance', access_id]);
+                        unpoke(data.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'instance', access_id]);
                     }
                 }
             });
@@ -122,7 +122,7 @@ export const purgeRedundantRecords = async (data, builder) => {
             console.warn(`purging ${cuts} of ${redundantFetchRanking.length} fetcher entities`);
             redundantFetchRanking.slice(0, cuts).forEach(({ access_id, data: { size }, projectUrl }) => {
                 incrementFetcherSizeCore(data.DatabaseStats, projectUrl, -size);
-                unsetLodash(data.FetchedStore, [projectUrl, access_id]);
+                unpoke(data.FetchedStore, [projectUrl, access_id]);
             });
             console.log('fetcher purging complete');
         }

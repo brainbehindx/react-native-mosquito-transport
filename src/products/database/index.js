@@ -626,7 +626,7 @@ const commitData = async (builder, value, type, config) => {
 
     await awaitStore();
     if (shouldCache) {
-        await addPendingWrites(builder, writeId, { value, type, find, config });
+        await addPendingWrites(builder, writeId, { value, type, config: stripUndefined({ disableAuth, stepping }) });
         Scoped.OutgoingWrites[writeId] = true;
         if (Scoped.dispatchingWritesPromise[projectUrl])
             await Scoped.dispatchingWritesPromise[projectUrl];
@@ -650,10 +650,11 @@ const commitData = async (builder, value, type, config) => {
             } else reject(b);
             if (hasFinalize || !instantProcess) return;
             hasFinalize = true;
+            if (Scoped.OutgoingWrites[writeId])
+                delete Scoped.OutgoingWrites[writeId];
+
             if (shouldCache) {
                 if (removeCache) removePendingWrite(builder, writeId, revertCache);
-                if (Scoped.OutgoingWrites[writeId])
-                    delete Scoped.OutgoingWrites[writeId];
             }
         };
 
@@ -728,7 +729,13 @@ export const trySendPendingWrite = (projectUrl) => {
 
         for (const [writeId, { snapshot, builder, attempts = 1 }] of sortedWrite) {
             try {
-                await commitData(builder, snapshot.value, snapshot.type, { ...snapshot.config, delivery: DELIVERY.NO_CACHE_NO_AWAIT });
+                await commitData(
+                    { ...Scoped.InitializedProject[projectUrl], ...builder },
+                    snapshot.value,
+                    snapshot.type,
+                    { ...snapshot.config, delivery: DELIVERY.NO_CACHE_NO_AWAIT }
+                );
+
                 delete CacheStore.PendingWrites[projectUrl][writeId];
                 ++resolveCounts;
             } catch (_) {
