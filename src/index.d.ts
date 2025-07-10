@@ -289,7 +289,7 @@ interface FetchHttpConfig {
     rawApproach?: boolean;
 }
 
-type Delievery = 'default' | 'no-cache' | 'no-await' | 'no-await-no-cache' | 'await-no-cache' | 'cache-no-await';
+type Delievery = 'default' | 'cache-no-await' | 'no-cache-no-await' | 'no-cache-await';
 
 interface WriteConfig {
     /**
@@ -297,21 +297,9 @@ interface WriteConfig {
      */
     disableAuth?: boolean;
 
-    DEFAULT: 'default',
-    CACHE_AWAIT: 'cache-await',
-    CACHE_NO_AWAIT: 'cache-no-await',
-    NO_CACHE_NO_AWAIT: 'no-cache-no-await',
-    NO_CACHE_AWAIT: 'no-cache-await'
-
     /**
      * This property determines how the write will be dispatch to the remote server
      *  TODO:
-     * 
-     * `default`: 
-     * `cache-await`: 
-     * `cache-no-await`: 
-     * `no-cache-no-await`: 
-     * `no-cache-await`: 
      */
     delivery?: Delievery;
 }

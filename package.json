@@ -1,6 +1,6 @@
 {
   "name": "react-native-mosquito-transport",
-  "version": "0.0.34",
+  "version": "0.0.37",
   "description": "React native javascript sdk for mosquito-transport (https://github.com/brainbehindx/mosquito-transport)",
   "main": "src/index.js",
   "type": "module",
@@ -28,7 +28,6 @@
   "homepage": "https://github.com/brainbehindx/react-native-mosquito-transport#readme",
   "dependencies": {
     "@turf/turf": "^7.2.0",
-    "bson": "^6.8.0",
     "buffer": "^6.0.3",
     "entity-serializer": "^1.0.3",
     "guard-object": "^1.1.4",

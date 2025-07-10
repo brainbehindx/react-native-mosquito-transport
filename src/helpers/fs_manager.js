@@ -1,6 +1,8 @@
+import { deserialize, serialize } from "entity-serializer";
 import { Scoped } from "./variables";
 import { Platform } from "react-native";
 import { Dirs, FileSystem } from "react-native-file-access";
+import { Buffer } from "buffer";
 
 const PARENT_FOLDER = `${Platform.OS === 'android' ? Dirs.DocumentDir.split('/').slice(0, -1).join('/') : Dirs.MainBundleDir}/mosquito_base`;
 
@@ -48,7 +50,7 @@ export const getSystem = (builder) => {
             const path = conjoin(table, primary_key);
             await FileSystem.mkdir(path).catch(() => null);
             await Promise.all(Object.entries(value).map(([k, v]) =>
-                FileSystem.writeFile(joinPath(path, k), JSON.stringify(v), 'utf8')
+                FileSystem.writeFile(joinPath(path, k), serialize(v).toString('base64'), 'base64')
             ));
         },
         delete: (table, primary_key) => FileSystem.unlink(conjoin(table, primary_key)),
@@ -56,7 +58,7 @@ export const getSystem = (builder) => {
             const path = conjoin(table, primary_key);
 
             const value_map = await Promise.all(extractions.map(async node =>
-                [node, JSON.parse(await FileSystem.readFile(joinPath(path, node), 'utf8'))]
+                [node, deserialize(Buffer.from(await FileSystem.readFile(joinPath(path, node), 'base64'), 'base64'))]
             ));
             return Object.fromEntries(value_map);
         },

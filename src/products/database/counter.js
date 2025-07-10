@@ -1,6 +1,6 @@
 import { CacheStore } from "../../helpers/variables";
-import { serializeToBase64 } from "./bson";
 import { grab, poke } from "poke-object";
+import { calculateObjectSize } from '../../vendor/bson';
 
 export const incrementDatabaseSize = (builder, path, size) => incrementDatabaseSizeCore(CacheStore.DatabaseStats, builder, path, size);
 
@@ -14,4 +14,4 @@ export const incrementDatabaseSizeCore = (baseObj, builder, path, size = 0) => {
     poke(baseObj.database, node, b4 + size);
 }
 
-export const docSize = doc => doc ? serializeToBase64({ _: doc }).length : 0;
+export const docSize = doc => doc ? calculateObjectSize({ _: doc }) : 0;

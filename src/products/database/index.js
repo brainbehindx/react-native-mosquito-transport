@@ -8,7 +8,7 @@ import { addPendingWrites, generateRecordID, getCountQuery, getRecord, insertCou
 import { validateCollectionName, validateFilter, validateFindConfig, validateFindObject, validateListenFindConfig } from "./validator";
 import { awaitRefreshToken, listenToken } from "../auth/accessor";
 import { DELIVERY, RETRIEVAL } from "../../helpers/values";
-import { ObjectId } from "bson/lib/bson.rn.cjs";
+import { ObjectId } from "../../vendor/bson";
 import { guardObject, Validator } from "guard-object";
 import { simplifyCaughtError } from "simplify-error";
 import cloneDeep from "lodash/cloneDeep";
@@ -395,6 +395,7 @@ const countCollection = async (builder, config) => {
             const b4Data = await getCountQuery(builder, accessId).catch(() => null);
 
             if (e?.simpleError) {
+                e.simpleError.ack = true;
                 finalize(undefined, e.simpleError);
             } else if (!disableCache && Validator.NUMBER(b4Data)) {
                 finalize(b4Data);
@@ -552,6 +553,7 @@ const findObject = async (builder, config) => {
                 (thisRecord = [await getRecordData()])[0];
 
             if (e?.simpleError) {
+                e.simpleError.ack = true;
                 finalize(undefined, e?.simpleError);
             } else if (
                 (retrieval === RETRIEVAL.CACHE_NO_AWAIT && !(await getThisRecord())) ||
@@ -689,7 +691,8 @@ const commitData = async (builder, value, type, config) => {
         } catch (e) {
             if (e?.simpleError) {
                 console.error(`${type} error (${path}), ${e.simpleError?.message}`);
-                finalize(undefined, e?.simpleError, { removeCache: true, revertCache: true });
+                e.simpleError.ack = true;
+                finalize(undefined, e.simpleError, { removeCache: true, revertCache: true });
             } else if (delivery === DELIVERY.NO_CACHE_NO_AWAIT) {
                 finalize(undefined, simplifyCaughtError(e).simpleError);
             } else if (retries > maxRetries) {
@@ -730,17 +733,17 @@ export const trySendPendingWrite = (projectUrl) => {
         for (const [writeId, { snapshot, builder, attempts = 1 }] of sortedWrite) {
             try {
                 await commitData(
-                    { ...Scoped.InitializedProject[projectUrl], ...builder },
-                    snapshot.value,
+                    { ...Scoped.InitializedProject[projectUrl], ...builder, find: deserializeBSON(builder.find, true)._ },
+                    deserializeBSON(snapshot.value, true)._,
                     snapshot.type,
                     { ...snapshot.config, delivery: DELIVERY.NO_CACHE_NO_AWAIT }
                 );
 
                 delete CacheStore.PendingWrites[projectUrl][writeId];
                 ++resolveCounts;
-            } catch (_) {
+            } catch (err) {
                 const { maxRetries } = builder;
-                if (!maxRetries || attempts >= maxRetries) {
+                if (err?.ack || !maxRetries || attempts >= maxRetries) {
                     delete CacheStore.PendingWrites[projectUrl][writeId];
                     ++resolveCounts;
                 } else if (CacheStore.PendingWrites[projectUrl]?.[writeId]) {
@@ -749,8 +752,7 @@ export const trySendPendingWrite = (projectUrl) => {
             }
         }
         resolve();
-        if (projectUrl in Scoped.dispatchingWritesPromise)
-            delete Scoped.dispatchingWritesPromise[projectUrl];
+        Scoped.dispatchingWritesPromise[projectUrl] = undefined;
         updateCacheStore(['PendingWrites']);
 
         if (

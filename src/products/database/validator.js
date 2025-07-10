@@ -1,7 +1,7 @@
 import { guardArray, GuardError, guardObject, GuardSignal, niceGuard, Validator } from "guard-object";
 import { sameInstance } from "../../helpers/peripherals";
 import { RETRIEVAL } from "../../helpers/values";
-import { Binary, BSONRegExp, BSONSymbol, Code, DBRef, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp, UUID } from 'bson/lib/bson.rn.cjs';
+import { Binary, BSONRegExp, BSONSymbol, Code, DBRef, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp, UUID } from '../../vendor/bson';
 import { bboxPolygon, booleanIntersects, booleanWithin, circle, distance, polygon } from "@turf/turf";
 import { grab } from "poke-object";
 

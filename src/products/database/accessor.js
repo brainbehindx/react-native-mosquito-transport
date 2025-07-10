@@ -4,11 +4,11 @@ import { CacheStore, Scoped } from "../../helpers/variables";
 import { assignExtractionFind, CompareBson, confirmFilterDoc, defaultBSON, downcastBSON, validateCollectionName, validateFilter } from "./validator";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
 import cloneDeep from "lodash/cloneDeep";
-import { BSONRegExp, ObjectId, Timestamp } from "bson/lib/bson.rn.cjs";
+import { BSONRegExp, ObjectId, Timestamp } from "../../vendor/bson";
 import { niceGuard, Validator } from "guard-object";
 import { TIMESTAMP } from "../..";
 import { docSize, incrementDatabaseSize } from "./counter";
-import { deserializeBSON, serializeToBase64 } from "./bson";
+import { DatastoreParser, serializeToBase64 } from "./bson";
 import { FS_PATH, getSystem, useFS } from "../../helpers/fs_manager";
 import { grab, poke, unpoke } from "poke-object";
 
@@ -100,14 +100,13 @@ export const insertRecord = async (builder, config, accessIdWithoutLimit, value,
             const editionSizeOffset = thisSize - (instanceData?.size || 0);
             const resultSizeOffset = isEpisode ? thisSize - (resultData?.size || 0) : 0;
 
-            const newData = serializeToBase64({
+            const newData = DatastoreParser.encode({
                 command,
                 config,
                 latest_limiter: limit,
-                size: thisSize,
                 data: value ? Array.isArray(value) ? value : [value] : []
             });
-            const newResultData = isEpisode && serializeToBase64({
+            const newResultData = isEpisode && DatastoreParser.encode({
                 data: value,
                 size: thisSize
             });
@@ -195,7 +194,7 @@ export const getRecord = async (builder, accessIdWithoutLimit, episode = 0) => {
                 isEpisode ? fs.find(LIMITER_RESULT(path), resultAccessId, ['value']) :
                     fs.find(LIMITER_DATA(path), accessIdWithoutLimit, ['value'])
             ).catch(() => null);
-            const thisData = qData && deserializeBSON(qData.value, true);
+            const thisData = qData && DatastoreParser.decode(qData.value);
 
             if (!thisData) return null;
 
@@ -283,7 +282,7 @@ const arrangeCommands = (c, removeLimit) => {
     if (c.sort) c.direction = [-1, 'desc', 'descending'].includes(c.direction) ? 'desc' : 'asc';
     if (c.find) c.find = sortFind(c.find);
     if (c.findOne) c.findOne = sortFind(c.findOne);
-    if (removeLimit && 'limit' in c) delete c.limit;
+    if (removeLimit && ('limit' in c)) delete c.limit;
     return sortObject(c);
 };
 
@@ -421,18 +420,18 @@ export const addPendingWrites = async (builder, writeId, result) => {
             await Promise.all(colListing.map(async ([access_id]) =>
                 useFS(builder, access_id, 'database')(async fs => {
                     const data = await fs.find(LIMITER_DATA(path), access_id, ['value'])
-                        .then(r => deserializeBSON(r.value, true));
+                        .then(r => DatastoreParser.decode(r.value));
 
                     await MutateDataInstance([access_id, data], path =>
                         pathFinder[path] || (
                             pathFinder[path] = fs.list(LIMITER_DATA(path), ['value'])
-                                .then(v => v.map(d => deserializeBSON(d[1].value, true).data).flat())
+                                .then(v => v.map(d => DatastoreParser.decode(d[1].value).data).flat())
                                 .catch(() => [])
                         )
                     );
                     await fs.set(LIMITER_DATA(path), access_id, {
                         touched: Date.now(),
-                        value: serializeToBase64(data),
+                        value: DatastoreParser.encode(data),
                         size: data.size
                     });
                 })
@@ -654,9 +653,11 @@ export const addPendingWrites = async (builder, writeId, result) => {
     });
     const pureBuilder = {};
 
-    ['path', 'dbUrl', 'dbName', 'find', 'extraHeaders'].forEach(v => {
+    ['path', 'dbUrl', 'dbName', 'find', 'extraHeaders', 'maxRetries'].forEach(v => {
         if (builder[v] !== undefined) pureBuilder[v] = builder[v];
     });
+    pureBuilder.find = serializeToBase64({ _: pureBuilder.find });
+    pendingSnapshot.value = serializeToBase64({ _: pendingSnapshot.value });
 
     let wasShifted;
 
@@ -672,7 +673,7 @@ export const addPendingWrites = async (builder, writeId, result) => {
                         { builder: pureBuilder, snapshot: pendingSnapshot }
                     )
                 ) {
-                    // shift it to the front
+                    // shift it to the back
                     obj.addedOn = Date.now();
                     wasShifted = true;
                     break;
@@ -709,12 +710,12 @@ export const removePendingWrite = async (builder, writeId, revert) => {
             } else {
                 await useFS(builder, access_id, 'database')(async fs => {
                     const colObj = await fs.find(LIMITER_DATA(path), access_id, ['value'])
-                        .then(v => deserializeBSON(v.value, true))
+                        .then(v => DatastoreParser.decode(v.value))
                         .catch(() => null);
                     if (!colObj) return;
                     RevertMutation(colObj);
                     await fs.set(LIMITER_DATA(path), access_id, {
-                        value: serializeToBase64(colObj),
+                        value: DatastoreParser.encode(colObj),
                         touched: Date.now(),
                         size: colObj.size
                     });

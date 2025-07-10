@@ -12,7 +12,6 @@ export const RETRIEVAL = {
 
 export const DELIVERY = {
     DEFAULT: 'default',
-    CACHE_AWAIT: 'cache-await', // TODO: remove
     CACHE_NO_AWAIT: 'cache-no-await',
     NO_CACHE_NO_AWAIT: 'no-cache-no-await',
     NO_CACHE_AWAIT: 'no-cache-await'
