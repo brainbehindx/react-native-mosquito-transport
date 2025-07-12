@@ -6,6 +6,7 @@ import { deserialize } from "entity-serializer";
 import { breakDbMap, purgeRedundantRecords } from "./purger";
 import { FS_PATH, getSystem } from "./fs_manager";
 import cloneDeep from "lodash/cloneDeep";
+import { Buffer } from "buffer";
 
 const { FILE_NAME, TABLE_NAME } = FS_PATH;
 
@@ -26,7 +27,20 @@ const prefillDatastore = (obj, caller) => {
     return obj;
 };
 
+const prefillFetcher = (store, encode) => {
+    store = cloneDeep(store);
+    Object.values(store).forEach(accessIdObj => {
+        Object.values(accessIdObj).forEach(value => {
+            value.data.buffer = encode ?
+                Buffer.from(value.data.buffer).toString('base64')
+                : Buffer.from(value.data.buffer, 'base64');
+        });
+    });
+    return store;
+}
+
 export const updateCacheStore = async (node) => {
+    node = node && node.filter((v, i, a) => a.indexOf(v) === i);
     const { io, promoteCache } = Scoped.ReleaseCacheData;
 
     const {
@@ -35,6 +49,7 @@ export const updateCacheStore = async (node) => {
         PendingAuthPurge,
         DatabaseStore,
         PendingWrites,
+        FetchedStore,
         ...restStore
     } = CacheStore;
 
@@ -55,7 +70,8 @@ export const updateCacheStore = async (node) => {
             PendingAuthPurge,
             ...promoteCache ? {
                 DatabaseStore: prefillDatastore(DatabaseStore, DatastoreParser.encode),
-                PendingWrites: minimizePendingWrite()
+                PendingWrites: minimizePendingWrite(),
+                FetchedStore: prefillFetcher(FetchedStore, true)
             } : {},
             ...promoteCache ? restStore : {}
         });
@@ -83,6 +99,7 @@ export const releaseCacheStore = async (builder) => {
     const { io } = builder;
 
     let data = {};
+    const tobePurged = [];
 
     try {
         if (io) {
@@ -93,6 +110,8 @@ export const releaseCacheStore = async (builder) => {
                     data.DatabaseStore,
                     r => DatastoreParser.decode(r, false)
                 );
+            if (data.FetchedStore)
+                data.FetchedStore = prefillFetcher(data.FetchedStore, false);
         } else {
             const query = await getSystem(FILE_NAME).list(TABLE_NAME, ['value']).catch(() => []);
             data = Object.fromEntries(
@@ -101,7 +120,9 @@ export const releaseCacheStore = async (builder) => {
                 )
             );
         }
-        await purgeRedundantRecords(data, builder);
+        await purgeRedundantRecords(data, builder, purgeNodes => {
+            tobePurged.push(...purgeNodes);
+        });
     } catch (e) {
         console.error('releaseCacheStore data err:', e);
     }
@@ -114,6 +135,9 @@ export const releaseCacheStore = async (builder) => {
     });
     Scoped.IsStoreReady = true;
     StoreReadyListener.dispatch('_', 'ready');
+    setTimeout(() => {
+        if (tobePurged.length) updateCacheStore(tobePurged);
+    }, 0);
 };
 
 export const getPrefferTime = () => Date.now() + (Scoped.serverTimeOffset || 0);

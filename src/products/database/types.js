@@ -1,4 +1,4 @@
-import { guardObject, GuardSignal, niceGuard } from "guard-object";
+import { niceGuard } from "guard-object";
 
 export const TIMESTAMP = { $timestamp: "now" };
 export const TIMESTAMP_OFFSET = (v) => ({ $timestamp_offset: v });
@@ -12,17 +12,13 @@ export const GEO_JSON = (lat, lng) => ({
     coordinates: [lng, lat],
 });
 
-export const FIND_GEO_JSON = (location, offSetMeters, centerMeters) => {
-    guardObject(GuardSignal.COORDINATE.LAT_LNG_INT).validate(location);
-
-    return {
-        $nearSphere: {
-            $geometry: {
-                type: "Point",
-                coordinates: location.slice(0).reverse()
-            },
-            $minDistance: centerMeters || 0,
-            $maxDistance: offSetMeters
-        }
-    };
-};
+export const FIND_GEO_JSON = (location, offSetMeters, centerMeters) => ({
+    $nearSphere: {
+        $geometry: {
+            type: "Point",
+            coordinates: location.slice(0).reverse()
+        },
+        $minDistance: centerMeters || 0,
+        $maxDistance: offSetMeters
+    }
+});

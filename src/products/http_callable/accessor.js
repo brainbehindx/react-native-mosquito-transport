@@ -40,6 +40,7 @@ export const getFetchResources = async (projectUrl, access_id) => {
     if (io) {
         const record = CacheStore.FetchedStore[projectUrl]?.[access_id];
         if (record) record.touched = Date.now();
+        updateCacheStore(['FetchedStore']);
         return record && cloneDeep(record?.data);
     }
 

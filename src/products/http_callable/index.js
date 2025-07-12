@@ -146,7 +146,7 @@ export const mfetch = async (input = '', init, config) => {
                 credentials: 'omit',
                 ...init,
                 ...uglified ? { body: reqBuilder } : encodeBody ? { body: serialize(body) } : {},
-                // cache: 'no-cache',
+                cache: 'no-cache',
                 headers: {
                     ...extraHeaders,
                     ...rawHeader,

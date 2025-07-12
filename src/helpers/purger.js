@@ -12,7 +12,7 @@ const inlineFsData = (arr, access_id_node = 'access_id') =>
         return obj;
     });
 
-export const purgeRedundantRecords = async (data, builder) => {
+export const purgeRedundantRecords = async (data, builder, willPurge) => {
     const { io, maxLocalDatabaseSize = 10485760, maxLocalFetchHttpSize = 10485760 } = builder;
 
     /**
@@ -20,9 +20,15 @@ export const purgeRedundantRecords = async (data, builder) => {
      */
     const { _db_size, _fetcher_size, counters, database, fetchers } = data.DatabaseStats || {};
 
+    const shouldPurgeDb = Validator.POSITIVE_NUMBER(_db_size) && maxLocalDatabaseSize && _db_size >= maxLocalDatabaseSize;
+    const shouldPurgeFetcher = Validator.POSITIVE_NUMBER(_fetcher_size) && maxLocalFetchHttpSize && _fetcher_size >= maxLocalFetchHttpSize;
+
+    if (shouldPurgeDb) willPurge(['DatabaseStore', 'DatabaseCountResult', 'DatabaseStats']);
+    if (shouldPurgeFetcher) willPurge(['FetchedStore', 'DatabaseStats']);
+
     if (io) {
         const purgeDatabase = () => {
-            if (!Validator.POSITIVE_NUMBER(_db_size) || !maxLocalDatabaseSize || _db_size < maxLocalDatabaseSize) return;
+            if (!shouldPurgeDb) return;
             const DbListing = [];
 
             breakDbMap(data.DatabaseStore, (projectUrl, dbUrl, dbName, path, value) => {
@@ -98,7 +104,7 @@ export const purgeRedundantRecords = async (data, builder) => {
             });
         }
         const purgeFetcher = () => {
-            if (!Validator.POSITIVE_NUMBER(_fetcher_size) || !maxLocalFetchHttpSize || _fetcher_size < maxLocalFetchHttpSize) return;
+            if (!shouldPurgeFetcher) return;
             const redundantFetchRanking = Object.entries(data.FetchedStore).map(([projectUrl, access_id_Obj]) =>
                 Object.entries(access_id_Obj).map(([access_id, data]) => ({
                     access_id,
@@ -133,7 +139,7 @@ export const purgeRedundantRecords = async (data, builder) => {
         await Promise.allSettled([
             (async () => {
                 try {
-                    if (!Validator.POSITIVE_NUMBER(_db_size) || !maxLocalDatabaseSize || _db_size < maxLocalDatabaseSize) return;
+                    if (!shouldPurgeDb) return;
                     const instances = [];
 
                     [database, counters].forEach((map, i) => {
@@ -204,7 +210,7 @@ export const purgeRedundantRecords = async (data, builder) => {
             })(),
             (async () => {
                 try {
-                    if (!Validator.POSITIVE_NUMBER(_fetcher_size) || !maxLocalFetchHttpSize || _fetcher_size < maxLocalFetchHttpSize) return;
+                    if (!shouldPurgeFetcher) return;
 
                     const redundantFetchRanking = await Promise.all(
                         Object.entries(fetchers).map(async ([projectUrl]) => {

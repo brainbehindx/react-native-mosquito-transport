@@ -6,7 +6,7 @@ import { DatabaseRecordsListener } from "../../helpers/listeners";
 import cloneDeep from "lodash/cloneDeep";
 import { BSONRegExp, ObjectId, Timestamp } from "../../vendor/bson";
 import { niceGuard, Validator } from "guard-object";
-import { TIMESTAMP } from "../..";
+import { TIMESTAMP } from "./types";
 import { docSize, incrementDatabaseSize } from "./counter";
 import { DatastoreParser, serializeToBase64 } from "./bson";
 import { FS_PATH, getSystem, useFS } from "../../helpers/fs_manager";
@@ -379,12 +379,72 @@ export const addPendingWrites = async (builder, writeId, result) => {
     result = result && cloneDeep(result);
     await awaitStore();
 
+    const { projectUrl } = builder;
+    const pendingSnapshot = cloneDeep(result);
+    const { editions, linearWrite, pathChanges } = await syncCache(builder, result);
+
+    const isStaticWrite = !linearWrite.some(({ value, type }) => {
+        if (
+            [
+                'updateOne',
+                'updateMany',
+                'mergeOne',
+                'mergeMany'
+            ].includes(type)
+        ) {
+            const operators = Object.keys(value);
+            return ['$inc', '$min', '$max', '$mul', '$pop', '$pull', '$push', '$rename'].includes(operators);
+        }
+    });
+    const pureBuilder = {};
+
+    ['path', 'dbUrl', 'dbName', 'find', 'extraHeaders', 'maxRetries'].forEach(v => {
+        if (builder[v] !== undefined) pureBuilder[v] = builder[v];
+    });
+    pureBuilder.find = serializeToBase64({ _: pureBuilder.find });
+    pendingSnapshot.value = serializeToBase64({ _: pendingSnapshot.value });
+
+    let wasShifted;
+
+    if (isStaticWrite) {
+        // find previously matching pending write
+        const entries = Object.entries(CacheStore.PendingWrites[projectUrl] || {});
+
+        for (const [writeId, obj] of entries) {
+            if (!Scoped.OutgoingWrites[writeId]) {
+                if (
+                    niceGuard(
+                        { builder: obj.builder, snapshot: obj.snapshot },
+                        { builder: pureBuilder, snapshot: pendingSnapshot }
+                    )
+                ) {
+                    // shift it to the back
+                    obj.addedOn = Date.now();
+                    wasShifted = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!wasShifted)
+        poke(CacheStore.PendingWrites, [projectUrl, writeId], cloneDeep({
+            builder: pureBuilder,
+            snapshot: pendingSnapshot,
+            editions,
+            addedOn: Date.now()
+        }));
+
+    updateCacheStore(['DatabaseStore', 'PendingWrites', 'DatabaseStats']);
+    notifyDatabaseNodeChanges(builder, [...pathChanges]);
+};
+
+const syncCache = async (builder, result) => {
     const { io } = Scoped.ReleaseCacheData;
     const { projectUrl, dbUrl, dbName } = builder;
-    const editions = [];
     const duplicateSets = {};
+    const editions = [];
     const pathChanges = new Set([]);
-    const pendingSnapshot = cloneDeep(result);
 
     const linearWrite =
         result.type === 'batchWrite' ?
@@ -392,6 +452,8 @@ export const addPendingWrites = async (builder, writeId, result) => {
                 ({ type: scope, value, find, path })
             )
             : [{ ...result, find: builder.find, path: builder.path }];
+
+    const copiedWrite = cloneDeep(linearWrite);
 
     await Promise.all(linearWrite.map(async ({ value: writeObj, find, type, path }) => {
         WriteValidator[type]({ find, value: writeObj });
@@ -638,132 +700,88 @@ export const addPendingWrites = async (builder, writeId, result) => {
         };
     }));
 
-    const isStaticWrite = !linearWrite.some(({ value, type }) => {
-        if (
-            [
-                'updateOne',
-                'updateMany',
-                'mergeOne',
-                'mergeMany'
-            ].includes(type)
-        ) {
-            const operators = Object.keys(value);
-            return ['$inc', '$min', '$max', '$mul', '$pop', '$pull', '$push', '$rename'].includes(operators);
-        }
-    });
-    const pureBuilder = {};
-
-    ['path', 'dbUrl', 'dbName', 'find', 'extraHeaders', 'maxRetries'].forEach(v => {
-        if (builder[v] !== undefined) pureBuilder[v] = builder[v];
-    });
-    pureBuilder.find = serializeToBase64({ _: pureBuilder.find });
-    pendingSnapshot.value = serializeToBase64({ _: pendingSnapshot.value });
-
-    let wasShifted;
-
-    if (isStaticWrite) {
-        // find previously matching pending write
-        const entries = Object.entries(CacheStore.PendingWrites[projectUrl] || {});
-
-        for (const [writeId, obj] of entries) {
-            if (!Scoped.OutgoingWrites[writeId]) {
-                if (
-                    niceGuard(
-                        { builder: obj.builder, snapshot: obj.snapshot },
-                        { builder: pureBuilder, snapshot: pendingSnapshot }
-                    )
-                ) {
-                    // shift it to the back
-                    obj.addedOn = Date.now();
-                    wasShifted = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!wasShifted)
-        poke(CacheStore.PendingWrites, [projectUrl, writeId], cloneDeep({
-            builder: pureBuilder,
-            snapshot: pendingSnapshot,
-            editions,
-            addedOn: Date.now()
-        }));
-
-    updateCacheStore(['DatabaseStore', 'PendingWrites', 'DatabaseStats']);
-    notifyDatabaseNodeChanges(builder, [...pathChanges]);
-};
+    return {
+        editions,
+        pathChanges: [...pathChanges],
+        linearWrite: copiedWrite
+    };
+}
 
 export const removePendingWrite = async (builder, writeId, revert) => {
     await awaitStore();
-    const { projectUrl, dbUrl, dbName } = builder;
+    const { projectUrl } = builder;
     const pendingData = grab(CacheStore.PendingWrites, [projectUrl, writeId]);
-    const { io } = Scoped.ReleaseCacheData;
-
     if (!pendingData) return;
-    const pathChanges = new Set([]);
 
-    if (revert) {
-        await Promise.all(pendingData.editions.map(async ([access_id, [b4Doc, afDoc], path]) => {
-            if (io) {
-                RevertMutation(grab(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'instance', access_id]));
-            } else {
-                await useFS(builder, access_id, 'database')(async fs => {
-                    const colObj = await fs.find(LIMITER_DATA(path), access_id, ['value'])
-                        .then(v => DatastoreParser.decode(v.value))
-                        .catch(() => null);
-                    if (!colObj) return;
-                    RevertMutation(colObj);
-                    await fs.set(LIMITER_DATA(path), access_id, {
-                        value: DatastoreParser.encode(colObj),
-                        touched: Date.now(),
-                        size: colObj.size
-                    });
-                });
-            }
-
-            function RevertMutation(colObj) {
-                const colList = colObj?.data;
-
-                const updateSize = (b4, af) => {
-                    const offset = docSize(af) - docSize(b4);
-                    colObj.size += offset;
-                    incrementDatabaseSize(builder, path, offset);
-                }
-
-                if (colList) {
-                    if (afDoc) {
-                        const editedIndex = colList.findIndex(e => CompareBson.equal(e._id, afDoc._id));
-                        if (editedIndex !== -1) {
-                            if (
-                                serializeToBase64(afDoc) === serializeToBase64(colList[editedIndex])
-                            ) {
-                                if (b4Doc) {
-                                    colList[editedIndex] = b4Doc;
-                                    updateSize(afDoc, b4Doc);
-                                } else {
-                                    colList.splice(editedIndex, 1);
-                                    updateSize(afDoc, undefined);
-                                }
-                            }
-                        }
-                    } else if (
-                        b4Doc &&
-                        colList.findIndex(e => CompareBson.equal(e._id, b4Doc._id)) === -1
-                    ) {
-                        colList.push(b4Doc);
-                        updateSize(undefined, b4Doc);
-                    }
-                }
-                pathChanges.add(path);
-            }
-        }));
-    }
+    const pathChanges = revert ? revertChanges(builder, pendingData.editions) : [];
 
     unpoke(CacheStore.PendingWrites, [projectUrl, writeId]);
     updateCacheStore(['PendingWrites', 'DatabaseStore', 'DatabaseStats']);
     notifyDatabaseNodeChanges(builder, [...pathChanges]);
 };
+
+const revertChanges = async (builder, pendingData) => {
+    const { io } = Scoped.ReleaseCacheData;
+    const { projectUrl, dbUrl, dbName } = builder;
+    const pathChanges = new Set([]);
+
+    await Promise.all(pendingData.map(async ([access_id, [b4Doc, afDoc], path]) => {
+        if (io) {
+            RevertMutation(grab(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'instance', access_id]));
+        } else {
+            await useFS(builder, access_id, 'database')(async fs => {
+                const colObj = await fs.find(LIMITER_DATA(path), access_id, ['value'])
+                    .then(v => DatastoreParser.decode(v.value))
+                    .catch(() => null);
+                if (!colObj) return;
+                RevertMutation(colObj);
+                await fs.set(LIMITER_DATA(path), access_id, {
+                    value: DatastoreParser.encode(colObj),
+                    touched: Date.now(),
+                    size: colObj.size
+                });
+            });
+        }
+
+        function RevertMutation(colObj) {
+            const colList = colObj?.data;
+
+            const updateSize = (b4, af) => {
+                const offset = docSize(af) - docSize(b4);
+                colObj.size += offset;
+                incrementDatabaseSize(builder, path, offset);
+            }
+
+            if (colList) {
+                if (afDoc) {
+                    const editedIndex = colList.findIndex(e => CompareBson.equal(e._id, afDoc._id));
+                    if (editedIndex !== -1) {
+                        if (
+                            serializeToBase64(afDoc) === serializeToBase64(colList[editedIndex])
+                        ) {
+                            if (b4Doc) {
+                                colList[editedIndex] = b4Doc;
+                                updateSize(afDoc, b4Doc);
+                            } else {
+                                colList.splice(editedIndex, 1);
+                                updateSize(afDoc, undefined);
+                            }
+                        }
+                    }
+                } else if (
+                    b4Doc &&
+                    colList.findIndex(e => CompareBson.equal(e._id, b4Doc._id)) === -1
+                ) {
+                    colList.push(b4Doc);
+                    updateSize(undefined, b4Doc);
+                }
+            }
+            pathChanges.add(path);
+        }
+    }));
+
+    return [...pendingData];
+}
 
 const notifyDatabaseNodeChanges = (builder, changedCollections = []) => {
     const { projectUrl, dbName, dbUrl } = builder;
