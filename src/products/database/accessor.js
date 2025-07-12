@@ -18,7 +18,7 @@ export const listenQueryEntry = (callback, { accessId, builder, config, processI
     const { projectUrl, dbName, dbUrl, path } = builder;
     const { episode = 0 } = config || {};
 
-    const nodeID = `${projectUrl}${dbName}${dbUrl}${path}`;
+    const nodeID = `${projectUrl}_${dbName}_${dbUrl}_${path}`;
 
     if (!Scoped.ActiveDatabaseListeners[nodeID])
         Scoped.ActiveDatabaseListeners[nodeID] = {};
@@ -713,7 +713,7 @@ export const removePendingWrite = async (builder, writeId, revert) => {
     const pendingData = grab(CacheStore.PendingWrites, [projectUrl, writeId]);
     if (!pendingData) return;
 
-    const pathChanges = revert ? revertChanges(builder, pendingData.editions) : [];
+    const pathChanges = revert ? await revertChanges(builder, pendingData.editions) : [];
 
     unpoke(CacheStore.PendingWrites, [projectUrl, writeId]);
     updateCacheStore(['PendingWrites', 'DatabaseStore', 'DatabaseStats']);
@@ -787,7 +787,7 @@ const notifyDatabaseNodeChanges = (builder, changedCollections = []) => {
     const { projectUrl, dbName, dbUrl } = builder;
 
     changedCollections.forEach(path => {
-        const nodeID = `${projectUrl}${dbName}${dbUrl}${path}`;
+        const nodeID = `${projectUrl}_${dbName}_${dbUrl}_${path}`;
         Object.entries(Scoped.ActiveDatabaseListeners[nodeID] || {})
             .sort((a, b) => a[1] - b[1])
             .forEach(([processId]) => {

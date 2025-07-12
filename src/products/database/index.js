@@ -721,43 +721,47 @@ const commitData = async (builder, value, type, config) => {
     return (await sendValue());
 };
 
-export const trySendPendingWrite = (projectUrl) => {
+export const trySendPendingWrite = async (projectUrl) => {
     if (Scoped.dispatchingWritesPromise[projectUrl]) return;
 
+    let resolveCallback;
     Scoped.dispatchingWritesPromise[projectUrl] = new Promise(async resolve => {
-        const sortedWrite = Object.entries(CacheStore.PendingWrites[projectUrl] || {})
-            .filter(([k]) => !Scoped.OutgoingWrites[k])
-            .sort((a, b) => a[1].addedOn - b[1].addedOn);
-        let resolveCounts = 0;
+        resolveCallback = resolve;
+    });
 
-        for (const [writeId, { snapshot, builder, attempts = 1 }] of sortedWrite) {
-            try {
-                await commitData(
-                    { ...Scoped.InitializedProject[projectUrl], ...builder, find: deserializeBSON(builder.find, true)._ },
-                    deserializeBSON(snapshot.value, true)._,
-                    snapshot.type,
-                    { ...snapshot.config, delivery: DELIVERY.NO_CACHE_NO_AWAIT }
-                );
+    const sortedWrite = Object.entries(CacheStore.PendingWrites[projectUrl] || {})
+        .filter(([k]) => !Scoped.OutgoingWrites[k])
+        .sort((a, b) => a[1].addedOn - b[1].addedOn);
+    let resolveCounts = 0;
 
+    for (const [writeId, { snapshot, builder, attempts = 1 }] of sortedWrite) {
+        try {
+            await commitData(
+                { ...Scoped.InitializedProject[projectUrl], ...builder, find: deserializeBSON(builder.find, true)._ },
+                deserializeBSON(snapshot.value, true)._,
+                snapshot.type,
+                { ...snapshot.config, delivery: DELIVERY.NO_CACHE_NO_AWAIT }
+            );
+
+            delete CacheStore.PendingWrites[projectUrl][writeId];
+            ++resolveCounts;
+        } catch (err) {
+            const { maxRetries } = builder;
+            if (err?.ack || !maxRetries || attempts >= maxRetries) {
                 delete CacheStore.PendingWrites[projectUrl][writeId];
                 ++resolveCounts;
-            } catch (err) {
-                const { maxRetries } = builder;
-                if (err?.ack || !maxRetries || attempts >= maxRetries) {
-                    delete CacheStore.PendingWrites[projectUrl][writeId];
-                    ++resolveCounts;
-                } else if (CacheStore.PendingWrites[projectUrl]?.[writeId]) {
-                    CacheStore.PendingWrites[projectUrl][writeId].attempts = attempts + 1;
-                }
+            } else if (CacheStore.PendingWrites[projectUrl]?.[writeId]) {
+                CacheStore.PendingWrites[projectUrl][writeId].attempts = attempts + 1;
             }
         }
-        resolve();
-        Scoped.dispatchingWritesPromise[projectUrl] = undefined;
-        updateCacheStore(['PendingWrites']);
+    }
+    resolveCallback();
+    if (Scoped.dispatchingWritesPromise[projectUrl])
+        delete Scoped.dispatchingWritesPromise[projectUrl];
+    updateCacheStore(['PendingWrites']);
 
-        if (
-            (sortedWrite.length - resolveCounts) &&
-            await getReachableServer(projectUrl)
-        ) trySendPendingWrite(projectUrl);
-    });
+    if (
+        (sortedWrite.length - resolveCounts) &&
+        await getReachableServer(projectUrl)
+    ) trySendPendingWrite(projectUrl);
 };

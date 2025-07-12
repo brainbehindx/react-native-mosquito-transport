@@ -1,3 +1,5 @@
+import { BSON } from "./vendor/bson";
+
 interface RNMTConfig {
     dbName?: string;
     dbUrl?: string;
@@ -74,6 +76,8 @@ export class DoNotEncrypt {
     constructor(value: any);
     value: any;
 }
+
+export { BSON }
 
 interface auth_provider_id {
     GOOGLE: 'google';
