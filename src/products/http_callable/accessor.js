@@ -1,14 +1,14 @@
 import { updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
-import cloneDeep from "lodash/cloneDeep";
 import { serialize } from "entity-serializer";
 import { incrementFetcherSize } from "./counter";
 import { FS_PATH, useFS } from "../../helpers/fs_manager";
+import { basicClone } from "../../helpers/basic_clone";
 
 const { FETCH_RESOURCES } = FS_PATH;
 
 export const insertFetchResources = async (projectUrl, access_id, value) => {
-    value = cloneDeep(value);
+    value = basicClone(value);
     const dataSize = serialize(value).byteLength;
 
     const { io } = Scoped.ReleaseCacheData;
@@ -41,7 +41,7 @@ export const getFetchResources = async (projectUrl, access_id) => {
         const record = CacheStore.FetchedStore[projectUrl]?.[access_id];
         if (record) record.touched = Date.now();
         updateCacheStore(['FetchedStore']);
-        return record && cloneDeep(record?.data);
+        return record && basicClone(record?.data);
     }
 
     const res = await useFS(FETCH_RESOURCES(projectUrl), access_id, 'httpFetch')(async fs => {

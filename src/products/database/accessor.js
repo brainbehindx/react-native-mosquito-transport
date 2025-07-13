@@ -3,7 +3,6 @@ import { awaitStore, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { assignExtractionFind, CompareBson, confirmFilterDoc, defaultBSON, downcastBSON, validateCollectionName, validateFilter } from "./validator";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
-import cloneDeep from "lodash/cloneDeep";
 import { BSONRegExp, ObjectId, Timestamp } from "../../vendor/bson";
 import { niceGuard, Validator } from "guard-object";
 import { TIMESTAMP } from "./types";
@@ -11,6 +10,7 @@ import { docSize, incrementDatabaseSize } from "./counter";
 import { DatastoreParser, serializeToBase64 } from "./bson";
 import { FS_PATH, getSystem, useFS } from "../../helpers/fs_manager";
 import { grab, poke, unpoke } from "poke-object";
+import { basicClone } from "../../helpers/basic_clone";
 
 const { LIMITER_DATA, LIMITER_RESULT, DB_COUNT_QUERY } = FS_PATH;
 
@@ -77,9 +77,9 @@ export const getCountQuery = async (builder, access_id) => {
 }
 
 export const insertRecord = async (builder, config, accessIdWithoutLimit, value, episode = 0) => {
-    builder = builder && cloneDeep(builder);
-    config = config && cloneDeep(config);
-    value = value && cloneDeep(value);
+    builder = builder && basicClone(builder);
+    config = config && basicClone(config);
+    value = value && basicClone(value);
 
     await awaitStore();
     const { io } = Scoped.ReleaseCacheData;
@@ -155,7 +155,7 @@ export const insertRecord = async (builder, config, accessIdWithoutLimit, value,
     incrementDatabaseSize(builder, path, editionSizeOffset + resultSizeOffset);
 
     poke(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'instance', accessIdWithoutLimit], newData);
-    if (isEpisode) poke(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'episode', accessIdWithoutLimit, `${limit}`], cloneDeep(newResultData));
+    if (isEpisode) poke(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'episode', accessIdWithoutLimit, `${limit}`], basicClone(newResultData));
     updateCacheStore(['DatabaseStore', 'DatabaseStats']);
 };
 
@@ -167,7 +167,7 @@ export const getRecord = async (builder, accessIdWithoutLimit, episode = 0) => {
     const isEpisode = episode === 1;
 
     const transformData = (data) => {
-        data = cloneDeep(data);
+        data = basicClone(data);
         if (random) {
             data = shuffleArray(data);
         } else if (sort) {
@@ -221,7 +221,7 @@ export const getRecord = async (builder, accessIdWithoutLimit, episode = 0) => {
         const resultData = grab(CacheStore.DatabaseStore, [projectUrl, dbUrl, dbName, path, 'episode', accessIdWithoutLimit, `${limit}`]);
         if (resultData) {
             resultData.touched = Date.now();
-            return [cloneDeep(resultData.data)];
+            return [basicClone(resultData.data)];
         }
         return null;
     }
@@ -242,8 +242,8 @@ export const getRecord = async (builder, accessIdWithoutLimit, episode = 0) => {
 };
 
 export const generateRecordID = (builder, config, removeLimit) => {
-    builder = builder && cloneDeep(builder);
-    config = config && cloneDeep(config);
+    builder = builder && basicClone(builder);
+    config = config && basicClone(config);
 
     const { command, path, countDoc } = builder;
     const { extraction, excludeFields, returnOnly } = config || {};
@@ -269,7 +269,7 @@ export const generateRecordID = (builder, config, removeLimit) => {
 };
 
 const arrangeCommands = (c, removeLimit) => {
-    c = cloneDeep(c);
+    c = basicClone(c);
     const sortFind = f => {
         ['$and', '$or', '$nor'].forEach(n => {
             if (f[n]) {
@@ -375,12 +375,12 @@ const WriteValidator = {
 export const validateWriteValue = ({ type, find, value }) => WriteValidator[type]({ find, value, type });
 
 export const addPendingWrites = async (builder, writeId, result) => {
-    builder = builder && cloneDeep(builder);
-    result = result && cloneDeep(result);
+    builder = builder && basicClone(builder);
+    result = result && basicClone(result);
     await awaitStore();
 
     const { projectUrl } = builder;
-    const pendingSnapshot = cloneDeep(result);
+    const pendingSnapshot = basicClone(result);
     const { editions, linearWrite, pathChanges } = await syncCache(builder, result);
 
     const isStaticWrite = !linearWrite.some(({ value, type }) => {
@@ -428,7 +428,7 @@ export const addPendingWrites = async (builder, writeId, result) => {
     }
 
     if (!wasShifted)
-        poke(CacheStore.PendingWrites, [projectUrl, writeId], cloneDeep({
+        poke(CacheStore.PendingWrites, [projectUrl, writeId], basicClone({
             builder: pureBuilder,
             snapshot: pendingSnapshot,
             editions,
@@ -453,7 +453,7 @@ const syncCache = async (builder, result) => {
             )
             : [{ ...result, find: builder.find, path: builder.path }];
 
-    const copiedWrite = cloneDeep(linearWrite);
+    const copiedWrite = basicClone(linearWrite);
 
     await Promise.all(linearWrite.map(async ({ value: writeObj, find, type, path }) => {
         WriteValidator[type]({ find, value: writeObj });
@@ -506,7 +506,7 @@ const syncCache = async (builder, result) => {
             const { extraction } = config || {};
 
             const logChanges = (d) => {
-                editions.push(cloneDeep([entityId, d, path]));
+                editions.push(basicClone([entityId, d, path]));
                 const [b4, af] = d;
                 const offset = docSize(af) - docSize(b4);
                 dataObj.size += offset;
@@ -518,7 +518,7 @@ const syncCache = async (builder, result) => {
             const accessExtraction = async obj => {
                 const buildAssignedExtraction = (data) => {
                     const d = (Array.isArray(extraction) ? extraction : [extraction]).map(thisExtraction => {
-                        const query = cloneDeep(thisExtraction);
+                        const query = basicClone(thisExtraction);
 
                         ['find', 'findOne'].forEach(n => {
                             if (query[n])
@@ -570,7 +570,7 @@ const syncCache = async (builder, result) => {
                     return findOne ? scrapDocs[0] : scrapDocs;
                 }));
 
-                return cloneDeep(Array.isArray(extraction) ? scrapedProjection : scrapedProjection[0]);
+                return basicClone(Array.isArray(extraction) ? scrapedProjection : scrapedProjection[0]);
             }
 
             if (['setOne', 'setMany'].includes(type)) {
@@ -582,7 +582,7 @@ const syncCache = async (builder, result) => {
 
                         if (instance_data.findIndex(v => CompareBson.equal(v._id, e._id)) === -1) {
                             const x = snipUpdate(obj);
-                            instance_data.push(cloneDeep(x));
+                            instance_data.push(basicClone(x));
                             logChanges([undefined, x]);
                         } else if (!duplicateSets[e._id]) {
                             console.warn(`document with _id=${e._id} already exist locally with ${type}() operation, skipping to online commit`);
@@ -824,7 +824,7 @@ const snipDocument = (data, find, config) => {
     if (!data || !config) return data;
     const { returnOnly, excludeFields } = config || {};
 
-    let output = cloneDeep(data);
+    let output = basicClone(data);
 
     if (returnOnly) {
         output = {};
@@ -967,7 +967,7 @@ const AtomicWriter = {
             : [grab(object, destStage.slice(0, -1).join('.')), sourceStage.slice(-1)[0], destStage.slice(-1)[0]];
 
         if (tipObj && tipSource in tipObj) {
-            tipObj[tipDest] = cloneDeep(tipObj[tipSource]);
+            tipObj[tipDest] = basicClone(tipObj[tipSource]);
             delete tipObj[tipSource];
         }
     },

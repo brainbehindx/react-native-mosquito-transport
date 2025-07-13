@@ -11,8 +11,8 @@ import { DELIVERY, RETRIEVAL } from "../../helpers/values";
 import { ObjectId } from "../../vendor/bson";
 import { guardObject, Validator } from "guard-object";
 import { simplifyCaughtError } from "simplify-error";
-import cloneDeep from "lodash/cloneDeep";
 import { deserializeBSON, serializeToBase64 } from "./bson";
+import { basicClone } from "../../helpers/basic_clone";
 
 export class MTCollection {
     constructor(config) {
@@ -136,6 +136,8 @@ const {
 } = EngineApi;
 
 const listenDocument = (callback, onError, builder, config) => {
+    builder = basicClone(builder);
+    config = basicClone(config);
     const { projectUrl, wsPrefix, serverE2E_PublicKey, baseUrl, dbUrl, dbName, path, disableCache, command, uglify, extraHeaders, castBSON } = builder;
     const { find, findOne, sort, direction, limit } = command;
     const { disableAuth, episode } = config || {};
@@ -160,7 +162,7 @@ const listenDocument = (callback, onError, builder, config) => {
         const thisSnapshotId = serializeToBase64({ _: s });
         if (thisSnapshotId === lastSnapshot) return;
         lastSnapshot = thisSnapshotId;
-        callback?.(cloneDeep(transformBSON(s, castBSON)));
+        callback?.(basicClone(transformBSON(s, castBSON)));
     };
 
     if (shouldCache) {
@@ -255,6 +257,9 @@ const listenDocument = (callback, onError, builder, config) => {
 };
 
 const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
+    connectData = basicClone(connectData);
+    disconnectData = basicClone(disconnectData);
+    builder = basicClone(builder);
     const { projectUrl, wsPrefix, baseUrl, serverE2E_PublicKey, dbUrl, dbName, extraHeaders, uglify } = builder;
     const disableAuth = false;
 
@@ -344,6 +349,8 @@ const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
 };
 
 const countCollection = async (builder, config) => {
+    builder = basicClone(builder);
+    config = basicClone(config);
     const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 1, uglify, extraHeaders, path, disableCache, command = {} } = builder;
     const { find } = command;
     const { disableAuth } = config || {};
@@ -445,10 +452,12 @@ const hydrateForeignDoc = ({ data, doc_holder }) => {
 
 const transformBSON = (d, castBSON) => {
     if (castBSON) return d && deserializeBSON(serializeToBase64({ _: d }), true)._;
-    return cloneDeep(d);
+    return basicClone(d);
 };
 
 const findObject = async (builder, config) => {
+    builder = basicClone(builder);
+    config = basicClone(config);
     const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 1, path, disableCache = false, uglify, extraHeaders, command, castBSON } = builder;
     const pureConfig = stripRequestConfig(config);
     validateFindObject(command);
@@ -476,8 +485,8 @@ const findObject = async (builder, config) => {
             const res = (instantProcess && a) ? transformBSON(a[0] || undefined, castBSON) : a;
 
             if (a) {
-                resolve(instantProcess ? cloneDeep(res) : a);
-            } else reject(instantProcess ? cloneDeep(b) : b);
+                resolve(instantProcess ? basicClone(res) : a);
+            } else reject(instantProcess ? basicClone(b) : b);
             if (hasFinalize || !instantProcess) return;
             hasFinalize = true;
 
@@ -498,8 +507,8 @@ const findObject = async (builder, config) => {
                 if (enableMinimizer) {
                     if (Scoped.PendingDbReadCollective[processAccessId]) {
                         Scoped.PendingDbReadCollective[processAccessId].push((a, b) => {
-                            if (a) resolve(cloneDeep(a.result));
-                            else reject(cloneDeep(b));
+                            if (a) resolve(basicClone(a.result));
+                            else reject(basicClone(b));
                         });
                         return;
                     }
@@ -596,7 +605,7 @@ const transformNullRecursively = obj => Object.fromEntries(
     )
 );
 
-const cleanBatchWrite = (value) => cloneDeep(value).map(v => {
+const cleanBatchWrite = (value) => basicClone(value).map(v => {
     if (Validator.OBJECT(v?.value)) {
         v.value = transformNullRecursively(v.value);
     } else if (Array.isArray(v?.value)) {
@@ -608,6 +617,8 @@ const cleanBatchWrite = (value) => cloneDeep(value).map(v => {
 });
 
 const commitData = async (builder, value, type, config) => {
+    builder = basicClone(builder);
+    config = basicClone(config);
     // transform undefined
     if (Validator.OBJECT(value)) {
         value = value && deserializeBSON(serializeToBase64({ _: transformNullRecursively(value) }))._;

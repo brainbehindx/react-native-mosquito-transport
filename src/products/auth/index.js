@@ -6,7 +6,7 @@ import { CacheStore, Scoped } from "../../helpers/variables";
 import { awaitRefreshToken, getEmulatedLinks, initTokenRefresher, injectEmulatedAuth, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
 import { deserializeE2E, encodeBinary, serializeE2E } from "../../helpers/peripherals";
 import { simplifyCaughtError, simplifyError } from "simplify-error";
-import cloneDeep from "lodash/cloneDeep";
+import { basicClone } from "../../helpers/basic_clone";
 
 const {
     _listenUserVerification,
@@ -171,7 +171,7 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
 
     try {
         await awaitStore();
-        const thisAuthStore = cloneDeep(CacheStore.AuthStore[projectUrl]);
+        const thisAuthStore = basicClone(CacheStore.AuthStore[projectUrl]);
 
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { data: `${encodeBinary(email)}.${encodeBinary(password)}` },
@@ -201,7 +201,7 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
 
     try {
         await awaitStore();
-        const thisAuthStore = cloneDeep(CacheStore.AuthStore[projectUrl]);
+        const thisAuthStore = basicClone(CacheStore.AuthStore[projectUrl]);
 
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: {
@@ -285,7 +285,7 @@ export const purgePendingToken = async (nodeId) => {
     try {
         let isConnected;
         try {
-            isConnected = (await (await fetch(_areYouOk(projectUrl))).json(), { cache: 'no-cache', credentials: 'omit' }).status === 'yes';
+            isConnected = (await (await fetch(_areYouOk(projectUrl))).json(), { credentials: 'omit' }).status === 'yes';
         } catch (_) { }
 
         if (!isConnected)
@@ -312,7 +312,7 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
 
     try {
         await awaitStore();
-        const thisAuthStore = cloneDeep(CacheStore.AuthStore[projectUrl]);
+        const thisAuthStore = basicClone(CacheStore.AuthStore[projectUrl]);
 
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
             body: { token },

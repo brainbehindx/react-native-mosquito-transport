@@ -1,4 +1,3 @@
-import cloneDeep from "lodash/cloneDeep";
 import { doSignOut, revokeAuthIntance } from ".";
 import EngineApi from "../../helpers/engine_api";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
@@ -7,6 +6,7 @@ import { awaitStore, buildFetchInterface, buildFetchResult, getPrefferTime, upda
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { simplifyError } from "simplify-error";
 import { Validator } from "guard-object";
+import { basicClone } from "../../helpers/basic_clone";
 
 export const listenToken = (callback, projectUrl) =>
     AuthTokenListener.listenTo(projectUrl, (t, n) => {
@@ -40,10 +40,10 @@ export const injectEmulatedAuth = async (config, emulatedURL) => {
 
     if (emulatedURL === projectUrl) throw `auth instance for ${emulatedURL} cannot emulate itself`;
     if (depended) throw `Chain Emulation Error: this auth instance (${projectUrl}) cannot be emulated as other auth instance (${depended[0]}) is already emulating it`;
-    const thisAuthStore = cloneDeep(CacheStore.AuthStore[projectUrl]);
+    const thisAuthStore = basicClone(CacheStore.AuthStore[projectUrl]);
     revokeAuthIntance(config, thisAuthStore);
 
-    CacheStore.AuthStore[projectUrl] = cloneDeep(CacheStore.AuthStore[emulatedURL]);
+    CacheStore.AuthStore[projectUrl] = basicClone(CacheStore.AuthStore[emulatedURL]);
     Scoped.AuthJWTToken[projectUrl] = token;
     CacheStore.EmulatedAuth[projectUrl] = emulatedURL;
 
@@ -155,7 +155,7 @@ const refreshToken = (builder, processRef, remainRetries = 1, isForceRefresh) =>
             if (isForceRefresh) Scoped.InitiatedForcedToken[projectUrl] = true;
 
             getEmulatedLinks(projectUrl).forEach(v => {
-                CacheStore.AuthStore[v] = cloneDeep(CacheStore.AuthStore[projectUrl]);
+                CacheStore.AuthStore[v] = basicClone(CacheStore.AuthStore[projectUrl]);
                 Scoped.AuthJWTToken[v] = f.result.token;
 
                 triggerAuthToken(v, isInit);

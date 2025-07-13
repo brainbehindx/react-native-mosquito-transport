@@ -1,6 +1,6 @@
-import cloneDeep from "lodash/cloneDeep";
 import { deserialize, serialize } from "../../vendor/bson";
 import { Buffer } from "buffer";
+import { basicClone } from "../../helpers/basic_clone";
 
 export const deserializeBSON = (data, cast) => {
     if (typeof data === 'string')
@@ -18,7 +18,7 @@ export const serializeToBase64 = doc => Buffer.from(serialize(doc)).toString('ba
 
 export const DatastoreParser = {
     encode: (obj) => {
-        obj = cloneDeep(obj);
+        obj = basicClone(obj);
         const { command, config } = obj;
 
         const serializeQuery = (e) =>
@@ -37,7 +37,7 @@ export const DatastoreParser = {
         return obj;
     },
     decode: (obj, cast = true) => {
-        obj = cloneDeep(obj);
+        obj = basicClone(obj);
         const { command, config } = obj;
 
         const serializeQuery = (e) =>

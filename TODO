@@ -21,4 +21,5 @@
 - switch to events package
 - serverTimeOffset
 - avoid sending cookies ✅
+- add timeout in fetchHttp
 <!-- - error: "refreshToken retry limit exceeded" <--- no need -->
