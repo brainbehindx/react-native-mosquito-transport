@@ -70,13 +70,15 @@ export const mfetch = async (input = '', init, config) => {
             !Validator.JSON(body)
         ) throw `"body" must be any of string, buffer, object`;
     }
+    await awaitStore();
 
     const reqId = await niceHash(
         serialize([
             rawHeader,
             body,
             !!disableAuth,
-            input
+            input,
+            disableAuth ? '' : (Scoped.AuthJWTToken[projectUrl] || '')
         ]).toString('base64')
     );
     const processReqId = `${reqId}_${disableCache}_${retrieval}`;
@@ -104,7 +106,6 @@ export const mfetch = async (input = '', init, config) => {
             }
         };
 
-        await awaitStore();
         const resolveCache = (reqData) => {
             finalize(reqData, undefined, { fromCache: true });
         };

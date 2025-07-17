@@ -31,7 +31,7 @@ const FindConfig = {
         ).length,
     returnOnly: ReturnAndExcludeFootprint,
     excludeFields: ReturnAndExcludeFootprint,
-
+    onWaiting: t => t === undefined || typeof t === 'function',
     episode: t => [undefined, 0, 1].includes(t),
     retrieval: t => t === undefined || Object.values(RETRIEVAL).includes(t),
     disableAuth: t => t === undefined || typeof t === 'boolean',

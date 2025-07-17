@@ -455,14 +455,16 @@ const transformBSON = (d, castBSON) => {
     return basicClone(d);
 };
 
-const findObject = async (builder, config) => {
+const findObject = async (builder, initConfig) => {
     builder = basicClone(builder);
-    config = basicClone(config);
     const { projectUrl, serverE2E_PublicKey, dbUrl, dbName, maxRetries = 1, path, disableCache = false, uglify, extraHeaders, command, castBSON } = builder;
-    const pureConfig = stripRequestConfig(config);
+
+    const pureConfig = stripRequestConfig(initConfig);
     validateFindObject(command);
-    validateFindConfig(config);
+    validateFindConfig(initConfig);
     validateCollectionName(path);
+
+    let { onWaiting, ...config } = basicClone(initConfig) || {};
 
     const { find, findOne, sort, direction, limit, random } = command;
     const { retrieval = RETRIEVAL.DEFAULT, episode = 0, disableAuth, disableMinimizer } = config || {};
@@ -475,6 +477,7 @@ const findObject = async (builder, config) => {
 
     await awaitStore();
 
+    let intruder = {};
     let retries = 0, hasFinalize;
 
     const readValue = () => new Promise(async (resolve, reject) => {
@@ -482,11 +485,12 @@ const findObject = async (builder, config) => {
             instantProcess = retryProcess === 1;
 
         const finalize = (a, b) => {
-            const res = (instantProcess && a) ? transformBSON(a[0] || undefined, castBSON) : a;
+            const res = (instantProcess && a) ? intruder ? transformBSON(a[0] || undefined, castBSON) : a[0] : a;
+            const doClone = v => intruder ? basicClone(v) : v;
 
             if (a) {
-                resolve(instantProcess ? basicClone(res) : a);
-            } else reject(instantProcess ? basicClone(b) : b);
+                resolve(instantProcess ? doClone(res) : a);
+            } else reject(instantProcess ? doClone(b) : b);
             if (hasFinalize || !instantProcess) return;
             hasFinalize = true;
 
@@ -497,7 +501,7 @@ const findObject = async (builder, config) => {
                     delete Scoped.PendingDbReadCollective[processAccessId];
 
                 resolutionList.forEach(e => {
-                    e(a ? { result: res } : undefined, b);
+                    e(a ? { result: doClone(res) } : undefined, doClone(b));
                 });
             }
         };
@@ -507,8 +511,8 @@ const findObject = async (builder, config) => {
                 if (enableMinimizer) {
                     if (Scoped.PendingDbReadCollective[processAccessId]) {
                         Scoped.PendingDbReadCollective[processAccessId].push((a, b) => {
-                            if (a) resolve(basicClone(a.result));
-                            else reject(basicClone(b));
+                            if (a) resolve(a.result);
+                            else reject(b);
                         });
                         return;
                     }
@@ -585,6 +589,8 @@ const findObject = async (builder, config) => {
             } else {
                 const onlineListener = listenReachableServer(connected => {
                     if (connected) {
+                        intruder.resolve = undefined;
+                        intruder.reject = undefined;
                         onlineListener();
                         readValue().then(
                             e => { finalize(e); },
@@ -592,6 +598,22 @@ const findObject = async (builder, config) => {
                         );
                     }
                 }, projectUrl);
+
+                const cleanseIntruder = () => {
+                    onlineListener?.();
+                    intruder = undefined;
+                }
+
+                intruder.resolve = (data) => {
+                    cleanseIntruder();
+                    finalize([data]);
+                };
+                intruder.reject = (err) => {
+                    cleanseIntruder();
+                    finalize(undefined, err);
+                };
+                onWaiting?.(intruder);
+                onWaiting = undefined;
             }
         }
     });
