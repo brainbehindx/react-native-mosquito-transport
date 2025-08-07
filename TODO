@@ -23,4 +23,5 @@
 - avoid sending cookies ✅
 - add timeout in fetchHttp
 - transform undefined to void instead of null
+- add metadata to provider auth login
 <!-- - error: "refreshToken retry limit exceeded" <--- no need -->

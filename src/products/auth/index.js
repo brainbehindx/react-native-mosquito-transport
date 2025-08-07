@@ -122,19 +122,17 @@ export default class MTAuth {
         }, this.builder.projectUrl);
     });
 
-    /**
-     * @type {import('../../index').RNMTAuth['listenAuth']}
-     */
     listenAuth = (callback) => {
-        let lastTrig;
+        let hasTrig;
+        const forceChangedNode = [['entityOf'], ['passwordVerified'], ['disabled'], ['authVerified'], ['sub'], ['email']];
 
         return listenToken((t, initToken) => {
             const { refreshToken } = CacheStore.AuthStore[this.builder.projectUrl] || {};
             const parseData = t && parseToken(t);
-            const tokenEntity = parseData?.entityOf || null;
 
             if (
-                tokenEntity !== lastTrig ||
+                !hasTrig ||
+                forceChangedNode.some(([k, v]) => parseData?.[k] !== v) ||
                 initToken
             ) {
                 callback(t ? {
@@ -146,7 +144,10 @@ export default class MTAuth {
                 } : null);
             }
 
-            lastTrig = tokenEntity;
+            forceChangedNode.forEach(v => {
+                v[1] = parseData?.[v[0]];
+            });
+            hasTrig = true;
         }, this.builder.projectUrl);
     }
 

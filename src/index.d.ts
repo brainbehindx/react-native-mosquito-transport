@@ -450,13 +450,13 @@ interface RNMTAuth {
     emulate: (projectUrl?: string) => Promise<void>;
 }
 
-interface SigninResult {
+export interface SigninResult {
     user: AuthData;
     token: string;
     refreshToken: string;
 }
 
-interface SignupResult extends SigninResult {
+export interface SignupResult extends SigninResult {
     isNewUser: boolean;
 }
 
