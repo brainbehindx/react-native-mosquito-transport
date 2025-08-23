@@ -286,7 +286,7 @@ export const purgePendingToken = async (nodeId) => {
     try {
         let isConnected;
         try {
-            isConnected = (await (await fetch(_areYouOk(projectUrl))).json(), { credentials: 'omit' }).status === 'yes';
+            isConnected = (await (await fetch(_areYouOk(projectUrl), { credentials: 'omit' })).json()).status === 'yes';
         } catch (_) { }
 
         if (!isConnected)
