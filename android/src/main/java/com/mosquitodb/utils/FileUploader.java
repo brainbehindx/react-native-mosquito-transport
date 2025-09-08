@@ -43,7 +43,7 @@ public class FileUploader {
                 connection.setRequestProperty("hash-upload", config.getString("createHash"));
                 connection.setRequestProperty("Mosquito-Destination", config.getString("destination"));
                 if (config.hasKey("authToken")) {
-                    connection.setRequestProperty("Mosquito-Token", config.getString("authToken"));
+                    connection.setRequestProperty("mtoken", config.getString("authToken"));
                 }
                 connection.setFixedLengthStreamingMode((int) totalBytes);
 

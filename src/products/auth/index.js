@@ -26,7 +26,7 @@ export default class MTAuth {
 
     customSignup = (email, password, name, metadata) => doCustomSignup(this.builder, email, password, name, metadata);
 
-    googleSignin = (token) => doGoogleSignin(this.builder, token);
+    googleSignin = (token, metadata) => doGoogleSignin(this.builder, token, metadata);
 
     appleSignin() {
         throw 'unsupported method call';
@@ -308,7 +308,7 @@ export const purgePendingToken = async (nodeId) => {
     }
 };
 
-const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) => {
+const doGoogleSignin = (builder, token, metadata) => new Promise(async (resolve, reject) => {
     const { projectUrl, serverE2E_PublicKey, uglify, extraHeaders } = builder;
 
     try {
@@ -316,7 +316,7 @@ const doGoogleSignin = (builder, token) => new Promise(async (resolve, reject) =
         const thisAuthStore = basicClone(CacheStore.AuthStore[projectUrl]);
 
         const [reqBuilder, [privateKey]] = await buildFetchInterface({
-            body: { token },
+            body: { token, metadata },
             uglify,
             serverE2E_PublicKey,
             extraHeaders
