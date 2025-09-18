@@ -63,9 +63,7 @@ class RNMT {
             triggerAuthToken(projectUrl);
             initTokenRefresher({ ...this.config }, true);
 
-            let isConnected,
-                lastSentToken,
-                queuedToken;
+            let isConnected, recentToken;
 
             const socket = io(`${this.config.wsPrefix}://${this.config.baseUrl}`, {
                 transports: ['websocket', 'polling', 'flashsocket'],
@@ -80,7 +78,7 @@ class RNMT {
                 ++connectionIte;
                 isConnected = true;
                 Scoped.IS_CONNECTED[projectUrl] = true;
-                if (queuedToken) updateMountedToken(queuedToken.token);
+                if (recentToken) updateMountedToken();
                 ServerReachableListener.dispatch(projectUrl, true);
                 awaitStore().then(() => {
                     if (isConnected) trySendPendingWrite(projectUrl);
@@ -114,18 +112,13 @@ class RNMT {
                 manualCheckConnection();
             });
 
-            const updateMountedToken = (token) => {
-                if ((lastSentToken || null) !== (token || null)) {
-                    socket.emit('_update_mounted_user', token || null);
-                    lastSentToken = token;
-                }
-                queuedToken = undefined;
+            const updateMountedToken = () => {
+                socket.emit('_update_mounted_user', recentToken || null);
             };
 
             listenToken(token => {
-                if (isConnected) {
-                    updateMountedToken(token);
-                } else queuedToken = { token };
+                recentToken = token;
+                if (isConnected) updateMountedToken();
             }, projectUrl);
 
             TokenRefreshListener.listenTo(projectUrl, v => {
