@@ -9,10 +9,10 @@ import { Validator } from "guard-object";
 import { basicClone } from "../../helpers/basic_clone";
 
 export const listenToken = (callback, projectUrl) =>
-    AuthTokenListener.listenTo(projectUrl, (t, n) => {
+    AuthTokenListener.listenToPersist(projectUrl, (t, n) => {
         if (t === undefined) return;
         callback?.(t || null, n);
-    }, true);
+    });
 
 export const injectFreshToken = async (config, { token, refreshToken }) => {
     const { projectUrl } = config;
@@ -56,19 +56,19 @@ export const parseToken = (token) => JSON.parse(decodeBinary(token.split('.')[1]
 
 export const triggerAuthToken = async (projectUrl, isInit) => {
     await awaitStore();
-    AuthTokenListener.dispatch(projectUrl, CacheStore.AuthStore[projectUrl]?.token || null, isInit);
+    AuthTokenListener.dispatchPersist(projectUrl, CacheStore.AuthStore[projectUrl]?.token || null, isInit);
 };
 
 export const awaitRefreshToken = (projectUrl) => new Promise(resolve => {
-    const l = TokenRefreshListener.listenTo(projectUrl, v => {
+    const l = TokenRefreshListener.listenToPersist(projectUrl, v => {
         if (v === 'ready') {
             l();
             resolve();
         }
-    }, true);
+    });
 });
 
-export const listenTokenReady = (callback, projectUrl) => TokenRefreshListener.listenTo(projectUrl, callback, true);
+export const listenTokenReady = (callback, projectUrl) => TokenRefreshListener.listenToPersist(projectUrl, callback);
 
 export const initTokenRefresher = async (config, forceRefresh) => {
     const { projectUrl, maxRetries } = config;
@@ -81,9 +81,9 @@ export const initTokenRefresher = async (config, forceRefresh) => {
     if (emulatedURL) return;
 
     const notifyAuthReady = (value) => {
-        TokenRefreshListener.dispatch(projectUrl, value);
+        TokenRefreshListener.dispatchPersist(projectUrl, value);
         getEmulatedLinks(projectUrl).forEach(v => {
-            TokenRefreshListener.dispatch(v, value);
+            TokenRefreshListener.dispatchPersist(v, value);
         });
     }
 

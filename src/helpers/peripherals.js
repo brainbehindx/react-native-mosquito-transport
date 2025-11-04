@@ -10,10 +10,10 @@ const { box, randomBytes } = naclPkg;
 
 export const listenReachableServer = (callback, projectUrl) => {
     let lastValue;
-    return ServerReachableListener.listenTo(projectUrl, t => {
+    return ServerReachableListener.listenToPersist(projectUrl, t => {
         if (typeof t === 'boolean' && t !== lastValue) callback?.(t);
         lastValue = t;
-    }, true);
+    });
 };
 
 export const prefixStoragePath = (path, prefix = 'file:///') => {

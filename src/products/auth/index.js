@@ -14,6 +14,7 @@ const {
     _customSignin,
     _customSignup,
     _googleSignin,
+    _appleSignin,
     _areYouOk
 } = EngineApi;
 
@@ -28,9 +29,7 @@ export default class MTAuth {
 
     googleSignin = (token, metadata) => doGoogleSignin(this.builder, token, metadata);
 
-    appleSignin() {
-        throw 'unsupported method call';
-    }
+    appleSignin = (token, metadata) => doAppleSignin(this.builder, token, metadata);
 
     facebookSignin() {
         throw 'unsupported method call';
@@ -240,7 +239,7 @@ const purgeCache = (url, isMain) => {
     ].forEach(e => {
         if (e && CacheStore[e]?.[url]) delete CacheStore[e][url];
     });
-    TokenRefreshListener.dispatch(url);
+    TokenRefreshListener.dispatchPersist(url);
     triggerAuthToken(url);
 };
 
@@ -308,7 +307,10 @@ export const purgePendingToken = async (nodeId) => {
     }
 };
 
-const doGoogleSignin = (builder, token, metadata) => new Promise(async (resolve, reject) => {
+const doGoogleSignin = (builder, token, metadata) => doProviderSignin(builder, token, metadata, _googleSignin);
+const doAppleSignin = (builder, token, metadata) => doProviderSignin(builder, token, metadata, _appleSignin);
+
+const doProviderSignin = (builder, token, metadata, endpointer) => new Promise(async (resolve, reject) => {
     const { projectUrl, serverE2E_PublicKey, uglify, extraHeaders } = builder;
 
     try {
@@ -322,7 +324,7 @@ const doGoogleSignin = (builder, token, metadata) => new Promise(async (resolve,
             extraHeaders
         });
 
-        const data = await buildFetchResult(await fetch(_googleSignin(projectUrl, uglify), reqBuilder), uglify);
+        const data = await buildFetchResult(await fetch(endpointer(projectUrl, uglify), reqBuilder), uglify);
 
         const f = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
@@ -338,7 +340,3 @@ const doGoogleSignin = (builder, token, metadata) => new Promise(async (resolve,
         reject(simplifyCaughtError(e).simpleError);
     }
 });
-
-const doAppleSignin = async () => {
-
-}

@@ -95,7 +95,7 @@ class MosquitodbUploadTask: NSObject, URLSessionDataDelegate {
             var request = URLRequest(url: URL(string: url)!)
             request.httpMethod = "POST"
 
-            if let extraHeaders = options["extraHeaders"] as? [[String: String]] {
+            if let extraHeaders = options["extraHeaders"] as? [String: String] {
                 for (key, value) in extraHeaders {
                     request.setValue(value, forHTTPHeaderField: key)
                 }
@@ -191,7 +191,7 @@ class MosquitodbDownloadTask: NSObject, URLSessionDownloadDelegate {
         var request = URLRequest(url: URL(string: url)!)
         request.httpMethod = "POST"
 
-        if let extraHeaders = options["extraHeaders"] as? [[String: String]] {
+        if let extraHeaders = options["extraHeaders"] as? [String: String] {
             for (key, value) in extraHeaders {
                 request.setValue(value, forHTTPHeaderField: key)
             }

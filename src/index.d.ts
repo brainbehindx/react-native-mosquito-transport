@@ -432,8 +432,13 @@ interface DocumentWriteValue {
 interface RNMTAuth {
     customSignin: (email: string, password: string) => Promise<SigninResult>;
     customSignup: (email: string, password: string, name?: string, metadata?: Object) => Promise<SignupResult>;
-    googleSignin: (token: string) => Promise<SignupResult>;
-    appleSignin: () => Promise<SignupResult>;
+    /**
+     * 
+     * @param token can be an `id_token` or `authorization code` returned from Google Identity Services
+     * @param metadata 
+     */
+    googleSignin: (token: string, metadata?: any | undefined) => Promise<SignupResult>;
+    appleSignin: (id_token: string, metadata?: any | undefined) => Promise<SignupResult>;
     facebookSignin: () => Promise<SignupResult>;
     twitterSignin: () => Promise<SignupResult>;
     githubSignin: () => Promise<SignupResult>;

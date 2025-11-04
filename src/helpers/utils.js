@@ -134,7 +134,7 @@ export const releaseCacheStore = async (builder) => {
         Scoped.AuthJWTToken[key] = value?.token;
     });
     Scoped.IsStoreReady = true;
-    StoreReadyListener.dispatch('_', 'ready');
+    StoreReadyListener.dispatchPersist('_', 'ready');
     setTimeout(() => {
         if (tobePurged.length) updateCacheStore(tobePurged);
     }, 0);
@@ -147,12 +147,12 @@ export const awaitStore = () => new Promise(resolve => {
         resolve();
         return;
     }
-    const l = StoreReadyListener.listenTo('_', t => {
+    const l = StoreReadyListener.listenToPersist('_', t => {
         if (t === 'ready') {
             resolve();
             l();
         }
-    }, true);
+    });
 });
 
 export const awaitReachableServer = (projectUrl) => new Promise(resolve => {
@@ -160,12 +160,12 @@ export const awaitReachableServer = (projectUrl) => new Promise(resolve => {
         resolve();
         return;
     }
-    const l = ServerReachableListener.listenTo(projectUrl, t => {
+    const l = ServerReachableListener.listenToPersist(projectUrl, t => {
         if (t) {
             resolve();
             l();
         }
-    }, true);
+    });
 });
 
 export const getReachableServer = (projectUrl) => new Promise(resolve => {
@@ -173,12 +173,12 @@ export const getReachableServer = (projectUrl) => new Promise(resolve => {
         resolve(Scoped.IS_CONNECTED[projectUrl]);
         return;
     }
-    const l = ServerReachableListener.listenTo(projectUrl, t => {
+    const l = ServerReachableListener.listenToPersist(projectUrl, t => {
         if (typeof t === 'boolean') {
             resolve(t);
             l();
         }
-    }, true);
+    });
 });
 
 export const buildFetchInterface = async ({ body, authToken, method, uglify, serverE2E_PublicKey, extraHeaders }) => {
