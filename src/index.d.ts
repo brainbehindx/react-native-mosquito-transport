@@ -347,7 +347,7 @@ interface GetConfig {
     retrieval?: Retrieval;
     /**
      * - 0: returns data that may have been internally updated locally with updateOne, updateMany, mergeOne, deleteOne, deleteMany, putOne, replaceOne
-     * - 1: returns exact data which was cached in the last query process
+     * - 1: returns exact remote data which was cached in the last query process
      * 
      * @defaults - 0
      * 

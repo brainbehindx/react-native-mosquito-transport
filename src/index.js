@@ -16,6 +16,7 @@ import { Buffer } from 'buffer';
 import MTAuth, { purgePendingToken } from './products/auth';
 import { BSON } from "./vendor/bson";
 import { basicClone } from './helpers/basic_clone';
+import { AppState } from "react-native";
 
 const {
     _listenCollection,
@@ -59,11 +60,10 @@ class RNMT {
 
         if (!Scoped.InitializedProject[projectUrl]) {
             Scoped.InitializedProject[projectUrl] = basicClone(this.config);
-            Scoped.LastTokenRefreshRef[projectUrl] = 0;
             triggerAuthToken(projectUrl);
-            initTokenRefresher({ ...this.config }, true);
+            initTokenRefresher({ config: this.config, forceRefresh: true });
 
-            let isConnected, recentToken;
+            let isConnected, recentToken, isVirtualMachineFocused = true;
 
             const socket = io(`${this.config.wsPrefix}://${this.config.baseUrl}`, {
                 transports: ['websocket', 'polling', 'flashsocket'],
@@ -86,9 +86,9 @@ class RNMT {
             };
             const onDisconnect = () => {
                 ++connectionIte;
-                isConnected = false;
-                Scoped.IS_CONNECTED[projectUrl] = false;
-                ServerReachableListener.dispatchPersist(projectUrl, false);
+                isConnected = isVirtualMachineFocused ? false : null;
+                Scoped.IS_CONNECTED[projectUrl] = isConnected;
+                ServerReachableListener.dispatchPersist(projectUrl, isConnected);
             }
 
             const manualCheckConnection = () => {
@@ -109,6 +109,11 @@ class RNMT {
 
             socket.on('connect', onConnect);
             socket.on('disconnect', () => {
+                manualCheckConnection();
+            });
+
+            AppState.addEventListener('change', (s) => {
+                isVirtualMachineFocused = s === 'active';
                 manualCheckConnection();
             });
 
@@ -308,7 +313,7 @@ class RNMT {
             tokenListener = listenTokenReady(status => {
                 if (lastTokenStatus === (status || false)) return;
 
-                if (status === 'ready') {
+                if (status) {
                     init();
                 } else {
                     socket?.close?.();
@@ -448,7 +453,7 @@ const ConfigValidator = {
         if (v.endsWith('/')) throw '"projectUrl" must not end with a trailing slash "/"';
     },
     disableCache: (v) => {
-        if (typeof v !== 'boolean')
+        if (typeof v !== 'boolean' && v !== undefined)
             throw `Invalid value supplied to disableCache, value must be a boolean`;
     },
     maxRetries: (v) => {
@@ -456,7 +461,7 @@ const ConfigValidator = {
             throw `Invalid value supplied to maxRetries, value must be positive integer greater than zero`;
     },
     enableE2E_Encryption: (v) => {
-        if (typeof v !== 'boolean')
+        if (typeof v !== 'boolean' && v !== undefined)
             throw `Invalid value supplied to enableE2E_Encryption, value must be a boolean`;
     },
     castBSON: v => {
@@ -468,7 +473,7 @@ const ConfigValidator = {
             throw `Expected "borrowToken" to be valid https or http link but got "${v}"`;
     },
     serverE2E_PublicKey: (v) => {
-        if (typeof v !== 'string' || !v.trim())
+        if (v !== undefined && (typeof v !== 'string' || !v.trim()))
             throw `Invalid value supplied to serverETE_PublicKey, value must be a non-empty string`;
     },
     extraHeaders: v => {

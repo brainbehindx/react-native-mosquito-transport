@@ -1,28 +1,14 @@
 import EngineApi from "../../helpers/engine_api";
 import { deserializeE2E, prefixStoragePath } from "../../helpers/peripherals";
 import { Scoped } from "../../helpers/variables";
-import { DeviceEventEmitter, NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { NativeEventEmitter } from 'react-native';
+import NativeMosquitoTransport from '../../NativeMosquitoTransport';
 import { awaitReachableServer, buildFetchInterface, buildFetchResult } from "../../helpers/utils";
 import { awaitRefreshToken } from "../auth/accessor";
 import { simplifyError } from "simplify-error";
 import { Validator } from "guard-object";
 
-const LINKING_ERROR =
-    `The package 'react-native-mosquito-transport' doesn't seem to be linked. Make sure: \n\n` +
-    Platform.select({ ios: "- You have run 'pod install'\n", default: '' }) +
-    '- You rebuilt the app after installing the package\n' +
-    '- You are not using Expo Go\n';
-
-const RNMTModule = NativeModules.Mosquitodb || (
-    new Proxy({}, {
-        get() {
-            throw new Error(LINKING_ERROR);
-        },
-    })
-);
-
-const emitter = Platform.OS === 'android' ?
-    DeviceEventEmitter : new NativeEventEmitter(RNMTModule);
+const emitter = new NativeEventEmitter(NativeMosquitoTransport);
 
 export class MTStorage {
     constructor(config) {
@@ -48,7 +34,7 @@ export class MTStorage {
 
         promise.abort = () => {
             if (hasFinished || hasCancelled) return;
-            RNMTModule.cancelDownload(processID);
+            NativeMosquitoTransport.cancelDownload(processID);
             hasCancelled = true;
             onComplete?.({ error: 'download_aborted', message: 'The download process was aborted' });
         }
@@ -82,12 +68,12 @@ export class MTStorage {
                     isPaused: !!isPaused,
                     pause: () => {
                         if (hasFinished || isPaused || hasCancelled) return;
-                        RNMTModule.pauseDownload(processID);
+                        NativeMosquitoTransport.pauseDownload(processID);
                         isPaused = true;
                     },
                     resume: () => {
                         if (hasFinished || !isPaused || hasCancelled) return;
-                        RNMTModule.resumeDownload(processID);
+                        NativeMosquitoTransport.resumeDownload(processID);
                         isPaused = false;
                     }
                 });
@@ -107,7 +93,7 @@ export class MTStorage {
                 progressListener.remove();
             });
 
-            RNMTModule.downloadFile({
+            NativeMosquitoTransport.downloadFile({
                 url: link,
                 authToken: Scoped.AuthJWTToken[projectUrl],
                 ...destination ? {
@@ -145,7 +131,7 @@ export class MTStorage {
             setTimeout(() => {
                 thisComplete?.({ error: 'upload_aborted', message: 'The upload process was aborted' });
             }, 0);
-            RNMTModule.cancelUpload(processID);
+            NativeMosquitoTransport.cancelUpload(processID);
         };
 
         if (typeof file !== 'string' || !file.trim()) {
@@ -191,7 +177,7 @@ export class MTStorage {
             });
             const authToken = Scoped.AuthJWTToken[projectUrl];
 
-            RNMTModule.uploadFile({
+            NativeMosquitoTransport.uploadFile({
                 url: EngineApi._uploadFile(thisProjectUrl, uglify),
                 file: isAsset ? file : file.substring('file://'.length),
                 ...authToken ? { authToken } : {},

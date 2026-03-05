@@ -4,7 +4,7 @@ import { Platform } from "react-native";
 import { Dirs, FileSystem } from "react-native-file-access";
 import { Buffer } from "buffer";
 
-const PARENT_FOLDER = `${Platform.OS === 'android' ? Dirs.DocumentDir.split('/').slice(0, -1).join('/') : Dirs.MainBundleDir}/mosquito_base`;
+const PARENT_FOLDER = `${Platform.OS === 'android' ? Dirs.DocumentDir.split('/').slice(0, -1).join('/') : Dirs.LibraryDir}/mosquito_base`;
 
 /**
  * this method linearize read/write for individual access_id on the file system ensuring consistency across concurrent operations

@@ -59,10 +59,11 @@ export default class MTAuth {
                 onError?.(simplifyError('user_login_required', 'You must be signed-in to use this method').simpleError);
                 return;
             }
-            if (processID !== lastInitRef) return;
+            if (processID !== lastInitRef || hasCancelled) return;
             const mtoken = Scoped.AuthJWTToken[projectUrl],
                 [reqBuilder, [privateKey]] = uglify ? await serializeE2E({ mtoken }, undefined, serverE2E_PublicKey) : [null, []];
 
+            if (processID !== lastInitRef || hasCancelled) return;
             socket = io(`${wsPrefix}://${baseUrl}`, {
                 transports: ['websocket', 'polling', 'flashsocket'],
                 auth: {
@@ -159,7 +160,7 @@ export default class MTAuth {
 
     signOut = () => doSignOut(this.builder);
 
-    forceRefreshToken = () => initTokenRefresher(this.builder, true);
+    forceRefreshToken = () => initTokenRefresher({ config: this.builder, forceRefresh: true });
 
     emulate = async (projectUrl) => {
         await injectEmulatedAuth(this.builder, projectUrl);
@@ -189,8 +190,8 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
             token: r.result.token,
             refreshToken: r.result.refreshToken
         });
-        await injectFreshToken(builder, r.result);
         revokeAuthIntance(builder, thisAuthStore);
+        await injectFreshToken(builder, r.result);
     } catch (e) {
         reject(simplifyCaughtError(e).simpleError);
     }
@@ -223,8 +224,8 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
             refreshToken: r.result.refreshToken,
             isNewUser: !!r.result.isNewUser
         });
-        await injectFreshToken(builder, r.result);
         revokeAuthIntance(builder, thisAuthStore);
+        await injectFreshToken(builder, r.result);
     } catch (e) {
         reject(simplifyCaughtError(e).simpleError);
     }
@@ -248,7 +249,7 @@ const clearCacheForSignout = (builder, disposeEmulated) => {
 
     purgeCache(projectUrl, true);
     if (disposeEmulated) getEmulatedLinks(projectUrl).forEach(e => purgeCache(e));
-    initTokenRefresher(builder);
+    initTokenRefresher({ config: builder });
 };
 
 export const doSignOut = async (builder) => {
@@ -335,8 +336,8 @@ const doProviderSignin = (builder, token, metadata, endpointer) => new Promise(a
             refreshToken: f.result.refreshToken,
             isNewUser: f.result.isNewUser
         });
-        await injectFreshToken(builder, f.result);
         revokeAuthIntance(builder, thisAuthStore);
+        await injectFreshToken(builder, f.result);
     } catch (e) {
         reject(simplifyCaughtError(e).simpleError);
     }

@@ -206,6 +206,7 @@ const listenDocument = (callback, onError, builder, config) => {
 
         const [encPlate, [privateKey]] = uglify ? await serializeE2E({ _body: authObj }, mtoken, serverE2E_PublicKey) : ['', []];
 
+        if (hasCancelled || processID !== lastInitRef) return;
         socket = io(`${wsPrefix}://${baseUrl}`, {
             transports: ['websocket', 'polling', 'flashsocket'],
             extraHeaders,
