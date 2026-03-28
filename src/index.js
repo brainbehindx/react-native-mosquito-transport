@@ -1,11 +1,11 @@
 import 'react-native-get-random-values';
 import { deserializeE2E, listenReachableServer, serializeE2E } from "./helpers/peripherals";
-import { awaitStore, releaseCacheStore } from "./helpers/utils";
+import { awaitReachableServer, awaitStore, releaseCacheStore } from "./helpers/utils";
 import { CacheStore, Scoped } from "./helpers/variables";
 import { MTCollection, batchWrite, onCollectionConnect, trySendPendingWrite } from "./products/database";
 import { MTStorage } from "./products/storage";
-import { ServerReachableListener, TokenRefreshListener } from "./helpers/listeners";
-import { initTokenRefresher, listenToken, listenTokenReady, triggerAuthToken } from "./products/auth/accessor";
+import { ServerReachableListener } from "./helpers/listeners";
+import { awaitRefreshToken, initTokenRefresher, listenToken, listenTokenReady, triggerAuthToken } from "./products/auth/accessor";
 import { TIMESTAMP, DOCUMENT_EXTRACTION, FIND_GEO_JSON, GEO_JSON, TIMESTAMP_OFFSET } from "./products/database/types";
 import { mfetch } from "./products/http_callable";
 import { io } from "socket.io-client";
@@ -73,34 +73,49 @@ class RNMT {
                     _from_base: true
                 }
             });
+
             let connectionIte = 0;
-            const onConnect = () => {
-                ++connectionIte;
-                isConnected = true;
-                Scoped.IS_CONNECTED[projectUrl] = true;
-                if (recentToken) updateMountedToken();
-                ServerReachableListener.dispatchPersist(projectUrl, true);
-                awaitStore().then(() => {
-                    if (isConnected) trySendPendingWrite(projectUrl);
-                });
-            };
-            const onDisconnect = () => {
-                ++connectionIte;
-                isConnected = isVirtualMachineFocused ? false : null;
+            let chainedPromise;
+            const setConnected = c => {
+                isConnected = c;
                 Scoped.IS_CONNECTED[projectUrl] = isConnected;
                 ServerReachableListener.dispatchPersist(projectUrl, isConnected);
             }
 
+            const onConnect = () => {
+                ++connectionIte;
+                setConnected(true);
+                if (recentToken) updateMountedToken();
+                awaitStore().then(() => {
+                    if (isConnected) trySendPendingWrite(projectUrl);
+                });
+            };
+
+            const onDisconnect = () => {
+                ++connectionIte;
+                setConnected(isVirtualMachineFocused ? false : null);
+            }
+
             const manualCheckConnection = () => {
+                if (chainedPromise) return;
                 const ref = ++connectionIte;
-                fetch(_areYouOk(projectUrl), { credentials: 'omit' }).then(async r => {
+                const signal = new AbortController();
+                const timer = setTimeout(() => {
+                    signal.abort();
+                }, 7000);
+                chainedPromise = fetch(_areYouOk(projectUrl), { credentials: 'omit', signal }).then(async r => {
+                    clearTimeout(timer);
+                    chainedPromise = undefined;
                     if ((await r.json()).status === 'yes') {
                         if (ref === connectionIte) onConnect();
                     } else throw null;
                 }).catch(() => {
+                    clearTimeout(timer);
+                    chainedPromise = undefined;
                     if (ref === connectionIte) onDisconnect();
                 });
             }
+
             manualCheckConnection();
 
             socket.on('_signal_signout', () => {
@@ -112,7 +127,7 @@ class RNMT {
                 manualCheckConnection();
             });
 
-            AppState.addEventListener('change', (s) => {
+            AppState.addEventListener('change', s => {
                 isVirtualMachineFocused = s === 'active';
                 manualCheckConnection();
             });
@@ -125,10 +140,6 @@ class RNMT {
                 recentToken = token;
                 if (isConnected) updateMountedToken();
             }, projectUrl);
-
-            TokenRefreshListener.listenTo(projectUrl, v => {
-                Scoped.IS_TOKEN_READY[projectUrl] = v;
-            });
         }
     }
 
@@ -181,15 +192,30 @@ class RNMT {
             _listenUserVerification
         ].map(v => [v(), v(true)]).flat();
 
-        const makeSocketCallback = () =>
-            new Promise(resolve => {
-                socketReadyCallback = resolve;
-            });
-
         let socketReadyCallback,
-            socketReadyPromise = makeSocketCallback(),
+            socketReadyPromise,
             socketListenerList = [],
             socketListenerIte = 0;
+
+        const makeSocketCallback = () => {
+            const prevCallback = socketReadyCallback;
+
+            socketReadyPromise = new Promise((resolve, reject) => {
+
+                socketReadyCallback = [
+                    () => {
+                        prevCallback?.[0]?.();
+                        resolve();
+                    },
+                    () => {
+                        prevCallback?.[1]?.();
+                        reject();
+                    }
+                ];
+            });
+        }
+
+        makeSocketCallback();
 
         /**
          * @type {import('socket.io-client').Socket}
@@ -225,66 +251,87 @@ class RNMT {
             }] : []);
         };
 
-        const emit = ({ timeout, promise, emittion: emittionx }) => new Promise(async (resolve, reject) => {
-            const [route, ...emittion] = emittionx;
+        const emit = ({ timeout, promise, emittion: emittionx }) =>
+            new Promise(async (resolve, reject) => {
+                const [route, ...emittion] = emittionx;
 
-            if (typeof route !== 'string')
-                throw `expected ${promise ? 'emitWithAck' : 'emit'} first argument to be a string type`;
+                if (typeof route !== 'string')
+                    throw `expected ${promise ? 'emitWithAck' : 'emit'} first argument to be a string type`;
 
-            if (restrictedRoute.includes(route))
-                throw `${route} is a restricted socket path, avoid using any of ${restrictedRoute}`;
+                if (restrictedRoute.includes(route))
+                    throw `${route} is a restricted socket path, avoid using any of ${restrictedRoute}`;
 
-            let hasResolved, stime = Date.now();
+                let hasResolved, stime = Date.now();
 
-            const timer = timeout ? setTimeout(() => {
-                hasResolved = true;
-                reject(new Error('emittion timeout'));
-            }, timeout) : undefined;
+                const timer = timeout ? setTimeout(() => {
+                    hasResolved = true;
+                    reject(new Error('emittion timeout'));
+                }, timeout) : undefined;
 
-            await socketReadyPromise;
-            if (hasResolved) return;
-            clearTimeout(timer);
+                await socketReadyPromise;
+                if (hasResolved) return;
+                clearTimeout(timer);
 
-            try {
-                const thisSocket = timeout ? socket.timeout(Math.max(timeout - (Date.now() - stime), 0)) : socket;
+                try {
+                    const thisSocket = timeout ? socket.timeout(Math.max(timeout - (Date.now() - stime), 0)) : socket;
 
-                const lastEmit = emittion.slice(-1)[0];
-                const hasEmitable = typeof lastEmit === 'function';
-                const [mit, not_encrypted] = encloseSocketArguments(hasEmitable ? emittion.slice(0, -1) : emittion);
+                    const lastEmit = emittion.slice(-1)[0];
+                    const hasEmitable = typeof lastEmit === 'function';
+                    const [mit, not_encrypted] = encloseSocketArguments(hasEmitable ? emittion.slice(0, -1) : emittion);
 
-                const [reqBuilder, [privateKey]] = uglify ? await serializeE2E(mit, undefined, serverE2E_PublicKey) : [undefined, []];
+                    const [reqBuilder, [privateKey]] = uglify ? await serializeE2E(mit, undefined, serverE2E_PublicKey) : [undefined, []];
 
-                if (hasEmitable && promise)
-                    throw 'emitWithAck cannot have function in it argument';
+                    if (hasEmitable && promise)
+                        throw 'emitWithAck cannot have function in it argument';
 
-                const result = await thisSocket[promise ? 'emitWithAck' : 'emit'](route,
-                    [uglify ? reqBuilder : mit, not_encrypted],
-                    ...hasEmitable ? [async function () {
-                        const [[args, not_encrypted]] = [...arguments];
-                        let res;
+                    const result = await thisSocket[promise ? 'emitWithAck' : 'emit'](route,
+                        [uglify ? reqBuilder : mit, not_encrypted],
+                        ...hasEmitable ? [async function () {
+                            const [[args, not_encrypted]] = [...arguments];
+                            let res;
 
-                        if (uglify) {
-                            res = await deserializeE2E(args, serverE2E_PublicKey, privateKey);
-                        } else res = args;
+                            if (uglify) {
+                                res = await deserializeE2E(args, serverE2E_PublicKey, privateKey);
+                            } else res = args;
 
-                        lastEmit(...discloseSocketArguments([res, not_encrypted]));
-                    }] : []
-                );
-                if (promise && result) {
-                    resolve(discloseSocketArguments([uglify ? await deserializeE2E(result[0], serverE2E_PublicKey, privateKey) : result[0], result[1]])[0]);
-                } else resolve();
-            } catch (e) {
-                reject(e);
+                            lastEmit(...discloseSocketArguments([res, not_encrypted]));
+                        }] : []
+                    );
+                    if (promise && result) {
+                        resolve(discloseSocketArguments([uglify ? await deserializeE2E(result[0], serverE2E_PublicKey, privateKey) : result[0], result[1]])[0]);
+                    } else resolve();
+                } catch (e) {
+                    reject(e);
+                }
+            });
+
+        let initIte = 0;
+        let foregroundListener;
+        const clearForegroundListener = () => {
+            if (!foregroundListener) return;
+            foregroundListener.remove();
+            foregroundListener = undefined;
+        }
+
+        const clearSocket = () => {
+            if (socket) {
+                socket.close();
+                socket = undefined;
             }
-        });
+        }
 
         const init = async () => {
+            clearForegroundListener();
             if (hasCancelled) return;
+            const instance_id = ++initIte;
+
             const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
             const [reqBuilder, [privateKey]] = uglify ? await serializeE2E({ a_extras: authHandshake }, mtoken, serverE2E_PublicKey) : [null, []];
 
             const getWsPrefix = url => url.startsWith('https') ? 'wss' : 'ws';
             const wsUrl = overidenUrl ? `${getWsPrefix(overidenUrl)}://${overidenUrl.split('://')[1]}` : `${wsPrefix}://${projectUrl.split('://')[1]}`;
+
+            if (instance_id !== initIte) return;
 
             socket = io(wsUrl, {
                 transports: ['websocket', 'polling', 'flashsocket'],
@@ -295,14 +342,70 @@ class RNMT {
                 } : {
                     ...mtoken ? { mtoken } : {},
                     a_extras: authHandshake
-                }
+                },
+                reconnection: false
             });
-            clientPrivateKey = privateKey;
 
-            socketReadyCallback();
+            const reconnect = (timeout) => {
+                if (initIte !== instance_id || hasCancelled) return;
+
+                makeSocketCallback();
+                const reloadIntance = async () => {
+                    if (!disableAuth) await awaitRefreshToken(projectUrl);
+                    if (initIte === instance_id) remountInit();
+                }
+
+                if (AppState.currentState === 'active') {
+                    setTimeout(() => {
+                        awaitReachableServer(projectUrl).then(reloadIntance);
+                    }, timeout);
+                } else {
+                    foregroundListener = AppState.addEventListener('change', s => {
+                        if (s === 'active') {
+                            clearForegroundListener();
+                            reloadIntance();
+                        }
+                    });
+                }
+            }
+
+            let wasHandled;
+            socket.on('connect', () => {
+                if (initIte !== instance_id) return;
+                socketReadyCallback[0]();
+                socketReadyCallback = undefined;
+            });
+
+            socket.on('connect_error', () => {
+                if (initIte !== instance_id || wasHandled) return;
+                wasHandled = true;
+                clearSocket();
+                reconnect(3000);
+            });
+
+            socket.on('disconnect', r => {
+                if (initIte !== instance_id || wasHandled) return;
+                wasHandled = true;
+                clearSocket();
+                if (r === 'io client disconnect') return;
+                if (r === 'io server disconnect') {
+                    resultant.destroy();
+                } else reconnect(0);
+            });
+
+            clientPrivateKey = privateKey;
             socketListenerList.forEach(([_, method, route, callback]) => {
                 socket[method](route, callback);
             });
+        }
+
+        const remountInit = () => {
+            makeSocketCallback();
+            if (socket) {
+                ++initIte;
+                clearSocket();
+            }
+            init();
         }
 
         if (disableAuth) {
@@ -310,17 +413,17 @@ class RNMT {
         } else {
             let lastTokenStatus;
 
-            tokenListener = listenTokenReady(status => {
-                if (lastTokenStatus === (status || false)) return;
-
-                if (status) {
-                    init();
+            tokenListener = listenTokenReady(ready => {
+                if (lastTokenStatus === (ready || false)) return;
+                if (ready) {
+                    remountInit();
                 } else {
-                    socket?.close?.();
-                    socket = undefined;
-                    socketReadyPromise = makeSocketCallback();
+                    makeSocketCallback();
+                    ++initIte;
+                    clearForegroundListener();
+                    clearSocket();
                 }
-                lastTokenStatus = status || false;
+                lastTokenStatus = ready || false;
             }, projectUrl);
         }
 
@@ -377,8 +480,14 @@ class RNMT {
             destroy: () => {
                 hasCancelled = true;
                 tokenListener?.();
-                if (socket) socket.close();
+                clearForegroundListener();
+                clearSocket();
                 socketListenerList = [];
+                if (!socketReadyCallback) {
+                    makeSocketCallback();
+                }
+                socketReadyCallback[1]('socket already disconnected');
+                socketReadyCallback = undefined;
             }
         };
 

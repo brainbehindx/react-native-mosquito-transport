@@ -1,5 +1,6 @@
 #import "MosquitoTransport.h"
 #import <React/RCTEventEmitter.h>
+#import <mach/mach_time.h>
 #if __has_include("MosquitoTransport-Swift.h")
 #import "MosquitoTransport-Swift.h"
 #else
@@ -49,9 +50,19 @@ RCT_EXPORT_MODULE()
   return NO;
 }
 
-RCT_EXPORT_METHOD(getSystemUptime:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
-  NSTimeInterval uptime = [NSProcessInfo processInfo].systemUptime;
-  resolve(@(uptime * 1000));
+- (void)getSystemUptime:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  static mach_timebase_info_data_t timebase;
+  if (timebase.denom == 0) {
+    mach_timebase_info(&timebase);
+  }
+
+  uint64_t time = mach_continuous_time();
+
+  uint64_t nanos = time * timebase.numer / timebase.denom;
+
+  double milliseconds = (double)nanos / 1e6;
+
+  resolve(@(milliseconds));
 }
 
 - (void)uploadFile:(NSDictionary *)options {

@@ -38,7 +38,7 @@ class MosquitoTransportModule(reactContext: ReactApplicationContext) :
   }
 
   override fun getSystemUptime(promise: Promise) {
-    val uptime = SystemClock.elapsedRealtime()
+    val uptime = SystemClock.elapsedRealtime().toDouble()
     promise.resolve(uptime)
   }
 

@@ -4,7 +4,6 @@ export const Scoped = {
     PendingIte: 0,
     AnyProcessIte: 0,
     IS_CONNECTED: {},
-    IS_TOKEN_READY: {},
     InitializedProject: {},
     ReleaseCacheData: undefined,
     AuthJWTToken: {},

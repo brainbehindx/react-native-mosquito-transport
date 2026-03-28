@@ -184,7 +184,9 @@ export const mfetch = async (input = '', init, config) => {
                 )
             };
 
-            if (shouldCache) insertFetchResources(projectUrl, reqId, resObj);
+            if (shouldCache) {
+                if (status === 200) insertFetchResources(projectUrl, reqId, resObj);
+            }
 
             finalize(resObj);
         } catch (e) {

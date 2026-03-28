@@ -2,17 +2,18 @@ import { io } from "socket.io-client";
 import EngineApi from "../../helpers/engine_api";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
 import { deserializeE2E, listenReachableServer, niceTry, serializeE2E } from "../../helpers/peripherals";
-import { awaitStore, buildFetchInterface, buildFetchResult, getReachableServer, updateCacheStore } from "../../helpers/utils";
+import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, getReachableServer, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { addPendingWrites, generateRecordID, getCountQuery, getRecord, insertCountQuery, insertRecord, listenQueryEntry, removePendingWrite, validateWriteValue } from "./accessor";
 import { validateCollectionName, validateFilter, validateFindConfig, validateFindObject, validateListenFindConfig } from "./validator";
-import { awaitRefreshToken, listenToken } from "../auth/accessor";
+import { awaitRefreshToken, listenTokenReady } from "../auth/accessor";
 import { DELIVERY, RETRIEVAL } from "../../helpers/values";
 import { ObjectId } from "../../vendor/bson";
 import { guardObject, Validator } from "guard-object";
 import { simplifyCaughtError } from "simplify-error";
 import { deserializeBSON, serializeToBase64 } from "./bson";
 import { basicClone } from "../../helpers/basic_clone";
+import { AppState } from "react-native";
 
 export class MTCollection {
     constructor(config) {
@@ -149,11 +150,13 @@ const listenDocument = (callback, onError, builder, config) => {
     validateFilter(findOne || find);
     validateCollectionName(path);
 
+    /**
+     * @type {import('socket.io-client').Socket}
+     */
+    let socket;
     let hasCancelled,
         hasRespond,
         cacheListener,
-        socket,
-        lastToken = Scoped.AuthJWTToken[projectUrl] || null,
         lastInitRef = 0,
         connectedListener,
         lastSnapshot;
@@ -184,7 +187,23 @@ const listenDocument = (callback, onError, builder, config) => {
         });
     }
 
+    let foregroundListener;
+    const clearForegroundListener = () => {
+        if (!foregroundListener) return;
+        foregroundListener.remove();
+        foregroundListener = undefined;
+    }
+
+    const clearSocket = () => {
+        if (socket) {
+            socket.close();
+            socket = undefined;
+        }
+    }
+
     const init = async () => {
+        clearForegroundListener();
+
         const processID = ++lastInitRef;
         if (!disableAuth) await awaitRefreshToken(projectUrl);
         if (hasCancelled || processID !== lastInitRef) return;
@@ -207,6 +226,7 @@ const listenDocument = (callback, onError, builder, config) => {
         const [encPlate, [privateKey]] = uglify ? await serializeE2E({ _body: authObj }, mtoken, serverE2E_PublicKey) : ['', []];
 
         if (hasCancelled || processID !== lastInitRef) return;
+
         socket = io(`${wsPrefix}://${baseUrl}`, {
             transports: ['websocket', 'polling', 'flashsocket'],
             extraHeaders,
@@ -217,7 +237,8 @@ const listenDocument = (callback, onError, builder, config) => {
                 },
                 _m_internal: true,
                 _m_route: (findOne ? _listenDocument : _listenCollection)(uglify)
-            }
+            },
+            reconnection: false
         });
 
         socket.on('mSnapshot', async ([err, snapshot]) => {
@@ -234,18 +255,71 @@ const listenDocument = (callback, onError, builder, config) => {
                 if (shouldCache) insertRecord(builder, config, await accessId, snapshot, episode);
             }
         });
+
+        const reconnect = (timeout) => {
+            if (processID !== lastInitRef || hasCancelled) return;
+
+            const reloadIntance = async () => {
+                if (processID !== lastInitRef && !hasCancelled) remountInit();
+            }
+
+            if (AppState.currentState === 'active') {
+                setTimeout(() => {
+                    awaitReachableServer(projectUrl).then(reloadIntance);
+                }, timeout);
+            } else {
+                foregroundListener = AppState.addEventListener('change', s => {
+                    if (s === 'active') {
+                        clearForegroundListener();
+                        reloadIntance();
+                    }
+                });
+            }
+        }
+
+        let wasHandled;
+        socket.on('connect_error', () => {
+            if (processID !== lastInitRef || wasHandled) return;
+            wasHandled = true;
+            clearSocket();
+            reconnect(3000);
+        });
+
+        socket.on('disconnect', r => {
+            if (processID !== lastInitRef || wasHandled) return;
+            wasHandled = true;
+            clearSocket();
+            if (r === 'io client disconnect' || r === 'io server disconnect') return;
+            reconnect(0);
+        });
     };
 
-    init();
-
-    const tokenListener = listenToken(t => {
-        if ((t || null) !== lastToken) {
-            socket?.close?.();
-            socket = undefined;
-            init();
+    const remountInit = () => {
+        if (socket) {
+            ++lastInitRef;
+            clearSocket();
         }
-        lastToken = t || null;
-    }, projectUrl);
+        init();
+    }
+
+    let lastTokenStatus;
+    let tokenListener;
+
+    if (disableAuth) {
+        init();
+    } else {
+        tokenListener = listenTokenReady(ready => {
+            if (lastTokenStatus === (ready || false)) return;
+            if (ready) {
+                remountInit();
+            } else {
+                ++lastInitRef;
+                clearForegroundListener();
+                clearSocket();
+            }
+            lastTokenStatus = ready || false;
+        }, projectUrl);
+    }
 
     return () => {
         if (hasCancelled) return;
@@ -253,7 +327,8 @@ const listenDocument = (callback, onError, builder, config) => {
         connectedListener?.();
         cacheListener?.();
         tokenListener?.();
-        if (socket) socket.close();
+        clearForegroundListener();
+        clearSocket();
     }
 };
 
@@ -279,18 +354,29 @@ const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
         }
     });
 
-    let hasCancelled,
-        /**
-         * @type {import('socket.io-client').Socket}
-         */
-        socket,
-        lastToken = Scoped.AuthJWTToken[projectUrl] || null,
+    /**
+     * @type {import('socket.io-client').Socket}
+     */
+    let socket,
+        hasCancelled,
         lastInitRef = 0;
+
+    let foregroundListener;
+    const clearForegroundListener = () => {
+        if (!foregroundListener) return;
+        foregroundListener.remove();
+        foregroundListener = undefined;
+    }
+
+    const clearSocket = () => {
+        if (socket) {
+            socket.close();
+            socket = undefined;
+        }
+    }
 
     const init = async () => {
         const processID = ++lastInitRef;
-        if (!disableAuth) await awaitRefreshToken(projectUrl);
-        if (hasCancelled || processID !== lastInitRef) return;
 
         const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
         const makeObj = (d) => ({
@@ -307,39 +393,95 @@ const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
             ...dbUrl ? { dbUrl } : undefined
         };
 
+        const uglifyData = uglify && (await serializeE2E({ _body: authObj }, mtoken, serverE2E_PublicKey))[0].toString('base64');
+
+        if (hasCancelled || processID !== lastInitRef) return;
+
         socket = io(`${wsPrefix}://${baseUrl}`, {
             transports: ['websocket', 'polling', 'flashsocket'],
             extraHeaders,
             auth: {
-                ...uglify ? {
-                    e2e: (await serializeE2E({ _body: authObj }, mtoken, serverE2E_PublicKey))[0].toString('base64')
-                } : {
+                ...uglify ? { e2e: uglifyData } : {
                     ...mtoken ? { mtoken } : {},
                     _body: authObj
                 },
                 _m_internal: true,
                 _m_route: _startDisconnectWriteTask(uglify)
+            },
+            reconnection: false
+        });
+
+        const reconnect = (timeout) => {
+            if (processID !== lastInitRef || hasCancelled) return;
+
+            const reloadIntance = async () => {
+                if (!disableAuth) await awaitRefreshToken(projectUrl);
+                if (processID !== lastInitRef && !hasCancelled) remountInit();
             }
+
+            if (AppState.currentState === 'active') {
+                setTimeout(() => {
+                    awaitReachableServer(projectUrl).then(reloadIntance);
+                }, timeout);
+            } else {
+                foregroundListener = AppState.addEventListener('change', s => {
+                    if (s === 'active') {
+                        clearForegroundListener();
+                        reloadIntance();
+                    }
+                });
+            }
+        }
+
+        let wasHandled;
+        socket.on('connect_error', () => {
+            if (processID !== lastInitRef || wasHandled) return;
+            wasHandled = true;
+            clearSocket();
+            reconnect(3000);
+        });
+
+        socket.on('disconnect', r => {
+            if (processID !== lastInitRef || wasHandled) return;
+            wasHandled = true;
+            clearSocket();
+            if (r === 'io client disconnect' || r === 'io server disconnect') return;
+            reconnect(0);
         });
     };
 
-    init();
-
-    const tokenListener = disableAuth ? undefined : listenToken(async t => {
-        if ((t || null) !== lastToken) {
-            if (socket) {
-                socket.close();
-                socket = undefined;
-                setTimeout(init, 500);
-            } else init();
+    const remountInit = () => {
+        if (socket) {
+            ++lastInitRef;
+            clearSocket();
         }
-        lastToken = t;
-    }, projectUrl);
+        init();
+    }
+
+    let lastTokenStatus;
+    let tokenListener;
+
+    if (disableAuth) {
+        init();
+    } else {
+        tokenListener = listenTokenReady(ready => {
+            if (lastTokenStatus === (ready || false)) return;
+            if (ready) {
+                remountInit();
+            } else {
+                ++lastInitRef;
+                clearForegroundListener();
+                clearSocket();
+            }
+            lastTokenStatus = ready || false;
+        }, projectUrl);
+    }
 
     return () => {
         if (hasCancelled) return;
         hasCancelled = true;
         tokenListener?.();
+        clearForegroundListener();
         if (socket) {
             const thisSocket = socket;
             return niceTry(() => thisSocket.timeout(5000).emitWithAck(_cancelDisconnectWriteTask(uglify))).finally(() => {

@@ -185,13 +185,14 @@ const doCustomSignin = (builder, email, password) => new Promise(async (resolve,
 
         const r = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
+        revokeAuthIntance(builder, thisAuthStore);
+        injectFreshToken(builder, r.result);
+
         resolve({
             user: parseToken(r.result.token),
             token: r.result.token,
             refreshToken: r.result.refreshToken
         });
-        revokeAuthIntance(builder, thisAuthStore);
-        await injectFreshToken(builder, r.result);
     } catch (e) {
         reject(simplifyCaughtError(e).simpleError);
     }
@@ -218,14 +219,15 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
 
         const r = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
+        revokeAuthIntance(builder, thisAuthStore);
+        injectFreshToken(builder, r.result);
+
         resolve({
             user: parseToken(r.result.token),
             token: r.result.token,
             refreshToken: r.result.refreshToken,
             isNewUser: !!r.result.isNewUser
         });
-        revokeAuthIntance(builder, thisAuthStore);
-        await injectFreshToken(builder, r.result);
     } catch (e) {
         reject(simplifyCaughtError(e).simpleError);
     }
@@ -249,7 +251,10 @@ const clearCacheForSignout = (builder, disposeEmulated) => {
 
     purgeCache(projectUrl, true);
     if (disposeEmulated) getEmulatedLinks(projectUrl).forEach(e => purgeCache(e));
-    initTokenRefresher({ config: builder });
+
+    setTimeout(() => {
+        initTokenRefresher({ config: builder });
+    }, 600);
 };
 
 export const doSignOut = async (builder) => {
@@ -330,14 +335,15 @@ const doProviderSignin = (builder, token, metadata, endpointer) => new Promise(a
 
         const f = uglify ? await deserializeE2E(data, serverE2E_PublicKey, privateKey) : data;
 
+        revokeAuthIntance(builder, thisAuthStore);
+        injectFreshToken(builder, f.result);
+
         resolve({
             user: parseToken(f.result.token),
             token: f.result.token,
             refreshToken: f.result.refreshToken,
             isNewUser: f.result.isNewUser
         });
-        revokeAuthIntance(builder, thisAuthStore);
-        await injectFreshToken(builder, f.result);
     } catch (e) {
         reject(simplifyCaughtError(e).simpleError);
     }
