@@ -1,5 +1,4 @@
 import { Buffer } from "buffer";
-import { ServerReachableListener } from "./listeners";
 import naclPkg from 'tweetnacl';
 import { deserialize, serialize } from "entity-serializer";
 import { sha256 } from 'react-native-sha256';
@@ -7,14 +6,6 @@ import { purifyFilepath } from "./fs_manager";
 import { grab } from "poke-object";
 
 const { box, randomBytes } = naclPkg;
-
-export const listenReachableServer = (callback, projectUrl) => {
-    let lastValue;
-    return ServerReachableListener.listenToPersist(projectUrl, t => {
-        if (typeof t === 'boolean' && t !== lastValue) callback?.(t);
-        lastValue = t;
-    });
-};
 
 export const prefixStoragePath = (path, prefix = 'file:///') => {
     let cleanedPath = path.replace(/^[^/]+:\/{1,3}/, '');
@@ -29,13 +20,6 @@ export const prefixStoragePath = (path, prefix = 'file:///') => {
 
     return `${prefix}${cleanedPath}`;
 };
-
-export const niceTry = (promise) => new Promise(async resolve => {
-    try {
-        const r = await promise();
-        resolve(r);
-    } catch (e) { resolve(); }
-});
 
 export const normalizeRoute = (route = '') => route.split('').map((v, i, a) =>
     ((!i && v === '/') || (i === a.length - 1 && v === '/') || (i && a[i - 1] === '/' && v === '/')) ? '' : v

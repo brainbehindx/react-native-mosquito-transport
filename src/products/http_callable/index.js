@@ -1,6 +1,6 @@
 import { Buffer } from "buffer";
-import { deserializeE2E, listenReachableServer, niceHash, normalizeRoute, serializeE2E } from "../../helpers/peripherals";
-import { awaitStore, getReachableServer } from "../../helpers/utils";
+import { deserializeE2E, niceHash, normalizeRoute, serializeE2E } from "../../helpers/peripherals";
+import { awaitReachableServer, awaitStore, getReachableServer } from "../../helpers/utils";
 import { RETRIEVAL } from "../../helpers/values";
 import { Scoped } from "../../helpers/variables";
 import { awaitRefreshToken, parseToken } from "../auth/accessor";
@@ -216,15 +216,12 @@ export const mfetch = async (input = '', init, config) => {
             } else if (retries > maxRetries) {
                 finalize(undefined, simplifyCaughtError(e).simpleError);
             } else {
-                const listener = listenReachableServer(async online => {
-                    if (online) {
-                        listener();
-                        callFetch().then(
-                            e => finalize(e),
-                            e => finalize(undefined, e)
-                        );
-                    }
-                }, projectUrl);
+                awaitReachableServer(projectUrl).then(() => {
+                    callFetch().then(
+                        e => finalize(e),
+                        e => finalize(undefined, e)
+                    );
+                });
             }
         }
     });

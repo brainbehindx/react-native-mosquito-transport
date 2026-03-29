@@ -1,8 +1,8 @@
 import { doSignOut, revokeAuthIntance } from "./index.js";
 import EngineApi from "../../helpers/engine_api";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
-import { decodeBinary, deserializeE2E, listenReachableServer } from "../../helpers/peripherals";
-import { awaitStore, buildFetchInterface, buildFetchResult, updateCacheStore } from "../../helpers/utils";
+import { decodeBinary, deserializeE2E } from "../../helpers/peripherals";
+import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { simplifyError } from "simplify-error";
 import { Validator } from "guard-object";
@@ -208,12 +208,9 @@ const refreshToken = (builder, remainRetries = 1, isForceRefresh) =>
                 );
                 console.error(`refreshToken retry limit exceeded err:`, e);
             } else {
-                const l = listenReachableServer(c => {
-                    if (c) {
-                        l();
-                        refreshToken(builder, remainRetries - 1, isForceRefresh).then(resolve, reject);
-                    }
-                }, projectUrl);
+                awaitReachableServer(projectUrl).then(() => {
+                    refreshToken(builder, remainRetries - 1, isForceRefresh).then(resolve, reject);
+                });
             }
         }
     });

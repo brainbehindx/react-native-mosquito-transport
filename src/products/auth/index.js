@@ -14,8 +14,7 @@ const {
     _customSignin,
     _customSignup,
     _googleSignin,
-    _appleSignin,
-    _areYouOk
+    _appleSignin
 } = EngineApi;
 
 export default class MTAuth {
@@ -291,12 +290,7 @@ export const purgePendingToken = async (nodeId) => {
 
     if (!token) return;
     try {
-        let isConnected;
-        try {
-            isConnected = (await (await fetch(_areYouOk(projectUrl), { credentials: 'omit' })).json()).status === 'yes';
-        } catch (_) { }
-
-        if (!isConnected) await awaitReachableServer(projectUrl);
+        await awaitReachableServer(projectUrl);
 
         const [reqBuilder] = await buildFetchInterface({
             body: { token, r_token },

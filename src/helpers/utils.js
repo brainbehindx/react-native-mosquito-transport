@@ -7,6 +7,8 @@ import { breakDbMap, purgeRedundantRecords } from "./purger";
 import { FS_PATH, getSystem } from "./fs_manager";
 import { Buffer } from "buffer";
 import { basicClone } from "./basic_clone";
+import engine_api from "./engine_api";
+import { AppState } from "react-native";
 
 const { FILE_NAME, TABLE_NAME } = FS_PATH;
 
@@ -153,31 +155,76 @@ export const awaitStore = () => new Promise(resolve => {
     });
 });
 
-export const awaitReachableServer = (projectUrl) => new Promise(resolve => {
-    if (Scoped.IS_CONNECTED[projectUrl]) {
-        resolve();
-        return;
+export const checkAreYouOk = (projectUrl) => {
+    if (!Scoped.AreYouOkPromise[projectUrl]) {
+        const signal = new AbortController();
+        const timer = setTimeout(() => {
+            signal.abort();
+        }, 9000);
+        const promise = fetch(engine_api._areYouOk(projectUrl), { credentials: 'omit', signal })
+            .then(async r => (await r.json()).status === 'yes')
+            .catch(() => false)
+            .then(async connected => {
+                Scoped.IS_CONNECTED[projectUrl] = connected;
+                ServerReachableListener.dispatchPersist(projectUrl, connected);
+
+                clearTimeout(timer);
+                delete Scoped.AreYouOkPromise[projectUrl];
+                return connected;
+            });
+
+        Scoped.AreYouOkPromise[projectUrl] = promise;
     }
-    const l = ServerReachableListener.listenToPersist(projectUrl, t => {
-        if (t) {
+
+    return Scoped.AreYouOkPromise[projectUrl];
+}
+
+export const listenReachableServer = (callback, projectUrl) => {
+    let lastValue;
+    return ServerReachableListener.listenToPersist(projectUrl, t => {
+        if (typeof t === 'boolean' && t !== lastValue) callback?.(t);
+        lastValue = t;
+    });
+};
+
+export const awaitReachableServer = (projectUrl) =>
+    new Promise(async resolve => {
+        if (AppState.currentState !== 'active') {
+            if (await checkAreYouOk(projectUrl)) {
+                resolve();
+                return;
+            }
+        }
+
+        if (Scoped.IS_CONNECTED[projectUrl]) {
+            resolve();
+            return;
+        }
+
+        const l = listenReachableServer(t => {
+            if (!t) return;
             resolve();
             l();
-        }
+        }, projectUrl);
     });
-});
 
-export const getReachableServer = (projectUrl) => new Promise(resolve => {
-    if (typeof Scoped.IS_CONNECTED[projectUrl] === 'boolean') {
-        resolve(Scoped.IS_CONNECTED[projectUrl]);
-        return;
-    }
-    const l = ServerReachableListener.listenToPersist(projectUrl, t => {
-        if (typeof t === 'boolean') {
+export const getReachableServer = (projectUrl) =>
+    new Promise(async resolve => {
+        if (AppState.currentState !== 'active') {
+            resolve(await checkAreYouOk(projectUrl));
+            return;
+        }
+
+        if (typeof Scoped.IS_CONNECTED[projectUrl] === 'boolean') {
+            resolve(Scoped.IS_CONNECTED[projectUrl]);
+            return;
+        }
+
+        const l = listenReachableServer(t => {
             resolve(t);
             l();
-        }
+        }, projectUrl);
     });
-});
 
 export const buildFetchInterface = async ({ body, authToken, method, uglify, serverE2E_PublicKey, extraHeaders }) => {
     if (!uglify) body = JSON.stringify({ ...body });

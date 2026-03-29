@@ -1,7 +1,7 @@
 import { io } from "socket.io-client";
 import EngineApi from "../../helpers/engine_api";
 import { DatabaseRecordsListener } from "../../helpers/listeners";
-import { deserializeE2E, listenReachableServer, niceTry, serializeE2E } from "../../helpers/peripherals";
+import { deserializeE2E, serializeE2E } from "../../helpers/peripherals";
 import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, getReachableServer, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { addPendingWrites, generateRecordID, getCountQuery, getRecord, insertCountQuery, insertRecord, listenQueryEntry, removePendingWrite, validateWriteValue } from "./accessor";
@@ -158,7 +158,6 @@ const listenDocument = (callback, onError, builder, config) => {
         hasRespond,
         cacheListener,
         lastInitRef = 0,
-        connectedListener,
         lastSnapshot;
 
     const dispatchSnapshot = s => {
@@ -179,11 +178,10 @@ const listenDocument = (callback, onError, builder, config) => {
 
         awaitStore().then(() => {
             if (hasCancelled) return;
-            connectedListener = listenReachableServer(async connected => {
-                connectedListener();
+            getReachableServer(projectUrl).then(connected => {
                 if (!connected && !hasRespond && !hasCancelled && shouldCache)
                     DatabaseRecordsListener.dispatch('d', processId);
-            }, projectUrl);
+            });
         });
     }
 
@@ -260,7 +258,7 @@ const listenDocument = (callback, onError, builder, config) => {
             if (processID !== lastInitRef || hasCancelled) return;
 
             const reloadIntance = async () => {
-                if (processID !== lastInitRef && !hasCancelled) remountInit();
+                if (processID === lastInitRef && !hasCancelled) remountInit();
             }
 
             if (AppState.currentState === 'active') {
@@ -289,8 +287,9 @@ const listenDocument = (callback, onError, builder, config) => {
             if (processID !== lastInitRef || wasHandled) return;
             wasHandled = true;
             clearSocket();
-            if (r === 'io client disconnect' || r === 'io server disconnect') return;
-            reconnect(0);
+            if (r === 'io client disconnect' || r === 'io server disconnect') {
+                canceller();
+            } else reconnect(0);
         });
     };
 
@@ -321,15 +320,16 @@ const listenDocument = (callback, onError, builder, config) => {
         }, projectUrl);
     }
 
-    return () => {
+    const canceller = () => {
         if (hasCancelled) return;
         hasCancelled = true;
-        connectedListener?.();
         cacheListener?.();
         tokenListener?.();
         clearForegroundListener();
         clearSocket();
     }
+
+    return canceller;
 };
 
 const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
@@ -416,7 +416,7 @@ const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
 
             const reloadIntance = async () => {
                 if (!disableAuth) await awaitRefreshToken(projectUrl);
-                if (processID !== lastInitRef && !hasCancelled) remountInit();
+                if (processID === lastInitRef && !hasCancelled) remountInit();
             }
 
             if (AppState.currentState === 'active') {
@@ -445,8 +445,9 @@ const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
             if (processID !== lastInitRef || wasHandled) return;
             wasHandled = true;
             clearSocket();
-            if (r === 'io client disconnect' || r === 'io server disconnect') return;
-            reconnect(0);
+            if (r === 'io client disconnect' || r === 'io server disconnect') {
+                canceller();
+            } else reconnect(0);
         });
     };
 
@@ -477,18 +478,24 @@ const initOnDisconnectionTask = ({ builder, connectData, disconnectData }) => {
         }, projectUrl);
     }
 
-    return () => {
+    const canceller = () => {
         if (hasCancelled) return;
         hasCancelled = true;
         tokenListener?.();
         clearForegroundListener();
         if (socket) {
             const thisSocket = socket;
-            return niceTry(() => thisSocket.timeout(5000).emitWithAck(_cancelDisconnectWriteTask(uglify))).finally(() => {
-                thisSocket.close();
-            });
+            try {
+                thisSocket.timeout(5000).emitWithAck(_cancelDisconnectWriteTask(uglify)).finally(() => {
+                    thisSocket.close();
+                });
+            } catch (error) {
+                console.warn('socket closure error:', error);
+            }
         }
     };
+
+    return canceller;
 };
 
 const countCollection = async (builder, config) => {
@@ -552,15 +559,12 @@ const countCollection = async (builder, config) => {
             } else if (retries > maxRetries) {
                 finalize(undefined, { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
             } else {
-                const onlineListener = listenReachableServer(connected => {
-                    if (connected) {
-                        onlineListener();
-                        readValue().then(
-                            e => { finalize(e); },
-                            e => { finalize(undefined, e); }
-                        );
-                    }
-                }, projectUrl);
+                awaitReachableServer(projectUrl).then(() => {
+                    readValue().then(
+                        e => { finalize(e); },
+                        e => { finalize(undefined, e); }
+                    );
+                });
             }
         }
     });
@@ -730,20 +734,18 @@ const findObject = async (builder, initConfig) => {
             } else if (retries > maxRetries) {
                 finalize(undefined, { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
             } else {
-                const onlineListener = listenReachableServer(connected => {
-                    if (connected) {
+                awaitReachableServer(projectUrl).then(() => {
+                    if (intruder) {
                         intruder.resolve = undefined;
                         intruder.reject = undefined;
-                        onlineListener();
                         readValue().then(
                             e => { finalize(e); },
                             e => { finalize(undefined, e); }
                         );
                     }
-                }, projectUrl);
+                });
 
                 const cleanseIntruder = () => {
-                    onlineListener?.();
                     intruder = undefined;
                 }
 
@@ -879,15 +881,12 @@ const commitData = async (builder, value, type, config) => {
                 );
             } else {
                 if (delivery === DELIVERY.NO_CACHE_AWAIT) {
-                    const onlineListener = listenReachableServer(connected => {
-                        if (connected) {
-                            onlineListener();
-                            sendValue().then(
-                                e => { finalize(e.a, undefined, e.c); },
-                                e => { finalize(undefined, e.b, e.c); }
-                            );
-                        }
-                    }, projectUrl);
+                    awaitReachableServer(projectUrl).then(() => {
+                        sendValue().then(
+                            e => { finalize(e.a, undefined, e.c); },
+                            e => { finalize(undefined, e.b, e.c); }
+                        );
+                    });
                 } else if (shouldCache) finalize({ status: 'queued' });
                 else finalize(undefined, simplifyCaughtError(e).simpleError);
             }
