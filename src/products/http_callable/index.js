@@ -1,9 +1,9 @@
 import { Buffer } from "buffer";
 import { deserializeE2E, niceHash, normalizeRoute, serializeE2E } from "../../helpers/peripherals";
-import { awaitReachableServer, awaitStore, getReachableServer } from "../../helpers/utils";
+import { awaitReachableServer, awaitStore } from "../../helpers/utils";
 import { RETRIEVAL } from "../../helpers/values";
 import { Scoped } from "../../helpers/variables";
-import { awaitRefreshToken, parseToken } from "../auth/accessor";
+import { ensureActiveToken, parseToken } from "../auth/accessor";
 import { simplifyCaughtError } from "simplify-error";
 import { guardObject, Validator } from "guard-object";
 import { serialize } from "entity-serializer";
@@ -134,8 +134,7 @@ export const mfetch = async (input = '', init, config) => {
                 }
             }
 
-            if (!disableAuth && await getReachableServer(projectUrl))
-                await awaitRefreshToken(projectUrl);
+            if (!disableAuth) await ensureActiveToken(projectUrl);
 
             const mtoken = disableAuth ? undefined : Scoped.AuthJWTToken[projectUrl];
             const initType = rawHeader['content-type'];

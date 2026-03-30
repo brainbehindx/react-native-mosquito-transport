@@ -157,18 +157,13 @@ export const awaitStore = () => new Promise(resolve => {
 
 export const checkAreYouOk = (projectUrl) => {
     if (!Scoped.AreYouOkPromise[projectUrl]) {
-        const signal = new AbortController();
-        const timer = setTimeout(() => {
-            signal.abort();
-        }, 9000);
-        const promise = fetch(engine_api._areYouOk(projectUrl), { credentials: 'omit', signal })
+        const promise = fetch(engine_api._areYouOk(projectUrl), { credentials: 'omit' })
             .then(async r => (await r.json()).status === 'yes')
             .catch(() => false)
             .then(async connected => {
                 Scoped.IS_CONNECTED[projectUrl] = connected;
                 ServerReachableListener.dispatchPersist(projectUrl, connected);
 
-                clearTimeout(timer);
                 delete Scoped.AreYouOkPromise[projectUrl];
                 return connected;
             });

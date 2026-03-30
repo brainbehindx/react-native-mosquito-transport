@@ -2,7 +2,7 @@ import { doSignOut, revokeAuthIntance } from "./index.js";
 import EngineApi from "../../helpers/engine_api";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
 import { decodeBinary, deserializeE2E } from "../../helpers/peripherals";
-import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, updateCacheStore } from "../../helpers/utils";
+import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, getReachableServer, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { simplifyError } from "simplify-error";
 import { Validator } from "guard-object";
@@ -75,6 +75,19 @@ export const awaitRefreshToken = (projectUrl) =>
             });
         }
     });
+
+export const ensureActiveToken = async (projectUrl) => {
+    if (await getReachableServer(projectUrl)) {
+        await awaitRefreshToken(projectUrl);
+    } else {
+        const emulatedURL = CacheStore.EmulatedAuth[projectUrl];
+        const { token } = CacheStore.AuthStore[emulatedURL || projectUrl] || {};
+
+        if (token && await hasTokenExpire(emulatedURL || projectUrl)) {
+            throw 'unable to refreshed expired token because of unreachable internet connection';
+        }
+    }
+}
 
 export const listenTokenReady = (callback, projectUrl) => TokenRefreshListener.listenToPersist(projectUrl, callback);
 

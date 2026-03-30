@@ -6,7 +6,7 @@ import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { addPendingWrites, generateRecordID, getCountQuery, getRecord, insertCountQuery, insertRecord, listenQueryEntry, removePendingWrite, validateWriteValue } from "./accessor";
 import { validateCollectionName, validateFilter, validateFindConfig, validateFindObject, validateListenFindConfig } from "./validator";
-import { awaitRefreshToken, listenTokenReady } from "../auth/accessor";
+import { awaitRefreshToken, ensureActiveToken, listenTokenReady } from "../auth/accessor";
 import { DELIVERY, RETRIEVAL } from "../../helpers/values";
 import { ObjectId } from "../../vendor/bson";
 import { guardObject, Validator } from "guard-object";
@@ -526,8 +526,7 @@ const countCollection = async (builder, config) => {
         };
 
         try {
-            if (!disableAuth && await getReachableServer(projectUrl))
-                await awaitRefreshToken(projectUrl);
+            if (!disableAuth) await ensureActiveToken(projectUrl);
 
             const [reqBuilder, [privateKey]] = await buildFetchInterface({
                 body: {
@@ -676,8 +675,7 @@ const findObject = async (builder, initConfig) => {
                 }
             }
 
-            if (!disableAuth && await getReachableServer(projectUrl))
-                await awaitRefreshToken(projectUrl);
+            if (!disableAuth) await ensureActiveToken(projectUrl);
 
             const [reqBuilder, [privateKey]] = await buildFetchInterface({
                 body: {
@@ -839,8 +837,7 @@ const commitData = async (builder, value, type, config) => {
         };
 
         try {
-            if (!disableAuth && await getReachableServer(projectUrl))
-                await awaitRefreshToken(projectUrl);
+            if (!disableAuth) await ensureActiveToken(projectUrl);
 
             const [reqBuilder, [privateKey]] = await buildFetchInterface({
                 body: {

@@ -54,11 +54,13 @@ export default class MTAuth {
             const processID = ++lastInitRef;
             await awaitRefreshToken(projectUrl);
 
+            if (processID !== lastInitRef || hasCancelled) return;
+
             if (!Scoped.AuthJWTToken[projectUrl]) {
                 onError?.(simplifyError('user_login_required', 'You must be signed-in to use this method').simpleError);
                 return;
             }
-            if (processID !== lastInitRef || hasCancelled) return;
+
             const mtoken = Scoped.AuthJWTToken[projectUrl],
                 [reqBuilder, [privateKey]] = uglify ? await serializeE2E({ mtoken }, undefined, serverE2E_PublicKey) : [null, []];
 
@@ -251,6 +253,7 @@ const clearCacheForSignout = (builder, disposeEmulated) => {
     purgeCache(projectUrl, true);
     if (disposeEmulated) getEmulatedLinks(projectUrl).forEach(e => purgeCache(e));
 
+    clearInterval(Scoped.TokenRefreshTimer[projectUrl]);
     setTimeout(() => {
         initTokenRefresher({ config: builder });
     }, 600);

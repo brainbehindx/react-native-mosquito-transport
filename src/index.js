@@ -74,7 +74,6 @@ class RNMT {
             });
 
             let connectionIte = 0;
-            let chainedPromise;
             const setConnected = c => {
                 isConnected = c;
                 Scoped.IS_CONNECTED[projectUrl] = isConnected;
@@ -91,11 +90,9 @@ class RNMT {
             };
 
             const manualCheckConnection = () => {
-                if (chainedPromise) return;
                 const ref = ++connectionIte;
 
                 checkAreYouOk(projectUrl).then(ok => {
-                    chainedPromise = undefined;
                     if (ref !== connectionIte) return;
                     if (ok) {
                         onConnect();
