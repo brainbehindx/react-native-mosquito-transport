@@ -157,6 +157,9 @@ export const awaitStore = () => new Promise(resolve => {
 
 export const checkAreYouOk = (projectUrl) => {
     if (!Scoped.AreYouOkPromise[projectUrl]) {
+        Scoped.IS_CONNECTED[projectUrl] = undefined;
+        ServerReachableListener.dispatchPersist(projectUrl, undefined);
+
         const promise = fetch(engine_api._areYouOk(projectUrl), { credentials: 'omit' })
             .then(async r => (await r.json()).status === 'yes')
             .catch(() => false)
@@ -182,25 +185,31 @@ export const listenReachableServer = (callback, projectUrl) => {
     });
 };
 
-export const awaitReachableServer = (projectUrl) =>
-    new Promise(async resolve => {
-        if (AppState.currentState !== 'active') {
-            if (await checkAreYouOk(projectUrl)) {
+export const awaitReachableServer = (projectUrl, pauseForRetry) =>
+    new Promise(resolve => {
+        const check = async () => {
+            if (AppState.currentState !== 'active') {
+                if (await checkAreYouOk(projectUrl)) {
+                    resolve();
+                    return;
+                }
+            }
+
+            if (Scoped.IS_CONNECTED[projectUrl]) {
                 resolve();
                 return;
             }
+
+            const l = listenReachableServer(t => {
+                if (!t) return;
+                resolve();
+                l();
+            }, projectUrl);
         }
 
-        if (Scoped.IS_CONNECTED[projectUrl]) {
-            resolve();
-            return;
-        }
-
-        const l = listenReachableServer(t => {
-            if (!t) return;
-            resolve();
-            l();
-        }, projectUrl);
+        if (pauseForRetry) {
+            setTimeout(check, Number.isInteger(pauseForRetry) ? pauseForRetry : 300);
+        } else check();
     });
 
 export const getReachableServer = (projectUrl) =>

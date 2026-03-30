@@ -342,9 +342,7 @@ class RNMT {
                 }
 
                 if (AppState.currentState === 'active') {
-                    setTimeout(() => {
-                        awaitReachableServer(projectUrl).then(reloadIntance);
-                    }, timeout);
+                    awaitReachableServer(projectUrl, timeout).then(reloadIntance);
                 } else {
                     foregroundListener = AppState.addEventListener('change', s => {
                         if (s === 'active') {
@@ -375,7 +373,7 @@ class RNMT {
                 clearSocket();
                 if (r === 'io client disconnect' || r === 'io server disconnect') {
                     resultant.destroy();
-                } else reconnect(0);
+                } else reconnect(true);
             });
 
             clientPrivateKey = privateKey;

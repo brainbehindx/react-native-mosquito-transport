@@ -42,10 +42,11 @@ export const mfetch = async (input = '', init, config) => {
             enableMinimizer: t => t === undefined || Validator.BOOLEAN(t),
             rawApproach: t => t === undefined || Validator.BOOLEAN(t),
             disableAuth: t => t === undefined || Validator.BOOLEAN(t),
-            retrieval: t => t === undefined || Object.values(RETRIEVAL).includes(t)
+            retrieval: t => t === undefined || Object.values(RETRIEVAL).includes(t),
+            enforce200: t => t === undefined || Validator.BOOLEAN(t)
         }).validate(method);
 
-    const { retrieval = RETRIEVAL.DEFAULT, enableMinimizer, rawApproach } = method || {};
+    const { retrieval = RETRIEVAL.DEFAULT, enableMinimizer, rawApproach, enforce200 } = method || {};
     const isLink = Validator.LINK(input);
     const isBaseUrl = isLink || rawApproach;
     const disableAuth = method?.disableAuth === undefined ? isBaseUrl : method?.disableAuth;
@@ -163,6 +164,8 @@ export const mfetch = async (input = '', init, config) => {
             const { ok, type, status, statusText, redirected, url, headers, size } = f;
             const simple = headers.get('simple_error');
 
+            if (enforce200 && status !== 200)
+                throw `expected response status to be 200 but got ${status}`;
             if (!isLink && simple) throw { simpleError: JSON.parse(simple) };
 
             const buffer = uglified ?
@@ -215,7 +218,7 @@ export const mfetch = async (input = '', init, config) => {
             } else if (retries > maxRetries) {
                 finalize(undefined, simplifyCaughtError(e).simpleError);
             } else {
-                awaitReachableServer(projectUrl).then(() => {
+                awaitReachableServer(projectUrl, true).then(() => {
                     callFetch().then(
                         e => finalize(e),
                         e => finalize(undefined, e)

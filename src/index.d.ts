@@ -297,6 +297,14 @@ export interface FetchHttpConfig {
     disableAuth?: boolean;
     enableMinimizer?: boolean;
     rawApproach?: boolean;
+    /**
+     * Wait for the server to come online if the response does not include a header with status 200.
+     * 
+     * This ensures that the fetchHttp method only resolves when a response with status 200 is received; otherwise, it rejects if the server is online but continues returning a non-200 status
+     * 
+     * @default false
+     */
+    enforce200?: boolean;
 }
 
 type Delievery = 'default' | 'cache-no-await' | 'no-cache-no-await' | 'no-cache-await';

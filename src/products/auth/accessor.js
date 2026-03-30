@@ -221,7 +221,7 @@ const refreshToken = (builder, remainRetries = 1, isForceRefresh) =>
                 );
                 console.error(`refreshToken retry limit exceeded err:`, e);
             } else {
-                awaitReachableServer(projectUrl).then(() => {
+                awaitReachableServer(projectUrl, true).then(() => {
                     refreshToken(builder, remainRetries - 1, isForceRefresh).then(resolve, reject);
                 });
             }
