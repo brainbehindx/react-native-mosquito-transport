@@ -155,17 +155,27 @@ export const awaitStore = () => new Promise(resolve => {
     });
 });
 
-export const checkAreYouOk = (projectUrl) => {
-    if (!Scoped.AreYouOkPromise[projectUrl]) {
+export const checkAreYouOk = (projectUrl, refresh) => {
+    if (!Scoped.AreYouOkPromise[projectUrl] || refresh) {
         Scoped.IS_CONNECTED[projectUrl] = undefined;
         ServerReachableListener.dispatchPersist(projectUrl, undefined);
+
+        const thatState = AppState.currentState;
 
         const promise = fetch(engine_api._areYouOk(projectUrl), { credentials: 'omit' })
             .then(async r => (await r.json()).status === 'yes')
             .catch(() => false)
             .then(async connected => {
-                Scoped.IS_CONNECTED[projectUrl] = connected;
-                ServerReachableListener.dispatchPersist(projectUrl, connected);
+                const thatPromise = Scoped.AreYouOkPromise[projectUrl];
+                if (thatPromise !== promise) {
+                    if (thatPromise) return thatPromise;
+                    return Scoped.IS_CONNECTED[projectUrl];
+                }
+
+                if (thatState === AppState.currentState) {
+                    Scoped.IS_CONNECTED[projectUrl] = connected;
+                    ServerReachableListener.dispatchPersist(projectUrl, connected);
+                }
 
                 delete Scoped.AreYouOkPromise[projectUrl];
                 return connected;
@@ -180,8 +190,10 @@ export const checkAreYouOk = (projectUrl) => {
 export const listenReachableServer = (callback, projectUrl) => {
     let lastValue;
     return ServerReachableListener.listenToPersist(projectUrl, t => {
-        if (typeof t === 'boolean' && t !== lastValue) callback?.(t);
-        lastValue = t;
+        if (typeof t === 'boolean' && t !== lastValue) {
+            callback?.(t);
+            lastValue = t;
+        }
     });
 };
 
@@ -208,7 +220,7 @@ export const awaitReachableServer = (projectUrl, pauseForRetry) =>
         }
 
         if (pauseForRetry) {
-            setTimeout(check, Number.isInteger(pauseForRetry) ? pauseForRetry : 300);
+            setTimeout(check, Number.isInteger(pauseForRetry) ? pauseForRetry : 500);
         } else check();
     });
 

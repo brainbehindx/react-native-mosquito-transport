@@ -89,10 +89,10 @@ class RNMT {
                 });
             };
 
-            const manualCheckConnection = () => {
+            const manualCheckConnection = (refresh) => {
                 const ref = ++connectionIte;
 
-                checkAreYouOk(projectUrl).then(ok => {
+                checkAreYouOk(projectUrl, refresh).then(ok => {
                     if (ref !== connectionIte) return;
                     if (ok) {
                         onConnect();
@@ -111,11 +111,11 @@ class RNMT {
 
             socket.on('connect', onConnect);
             socket.on('disconnect', () => {
-                manualCheckConnection();
+                manualCheckConnection(true);
             });
 
             AppState.addEventListener('change', s => {
-                manualCheckConnection();
+                if (s === 'active') manualCheckConnection();
             });
 
             const updateMountedToken = () => {

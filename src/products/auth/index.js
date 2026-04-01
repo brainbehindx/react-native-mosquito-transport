@@ -1,6 +1,5 @@
 import { io } from "socket.io-client";
 import EngineApi from "../../helpers/engine_api";
-import { TokenRefreshListener } from "../../helpers/listeners";
 import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { awaitRefreshToken, getEmulatedLinks, initTokenRefresher, injectEmulatedAuth, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
@@ -243,7 +242,6 @@ const purgeCache = (url, isMain) => {
     ].forEach(e => {
         if (e && CacheStore[e]?.[url]) delete CacheStore[e][url];
     });
-    TokenRefreshListener.dispatchPersist(url);
     triggerAuthToken(url);
 };
 
@@ -254,9 +252,7 @@ const clearCacheForSignout = (builder, disposeEmulated) => {
     if (disposeEmulated) getEmulatedLinks(projectUrl).forEach(e => purgeCache(e));
 
     clearInterval(Scoped.TokenRefreshTimer[projectUrl]);
-    setTimeout(() => {
-        initTokenRefresher({ config: builder });
-    }, 600);
+    initTokenRefresher({ config: builder });
 };
 
 export const doSignOut = async (builder) => {

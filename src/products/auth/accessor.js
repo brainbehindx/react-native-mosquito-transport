@@ -89,7 +89,43 @@ export const ensureActiveToken = async (projectUrl) => {
     }
 }
 
-export const listenTokenReady = (callback, projectUrl) => TokenRefreshListener.listenToPersist(projectUrl, callback);
+export const listenTokenReady = (callback, projectUrl) => {
+    let lastToken;
+    let resetDelayTimer;
+    let postCaller;
+
+    const listener = TokenRefreshListener.listenToPersist(projectUrl, (...args) => {
+        const newTruthy = !!Scoped.AuthJWTToken[projectUrl];
+
+        if (resetDelayTimer !== undefined) {
+            if (newTruthy) {
+                clearTimeout(resetDelayTimer);
+                resetDelayTimer = undefined;
+                postCaller = undefined;
+                callback?.(...args);
+            } else {
+                postCaller = () => callback?.(...args);
+            }
+        } else if (typeof lastToken === 'boolean' && !newTruthy && lastToken) {
+            callback?.(false);
+            resetDelayTimer = setTimeout(() => {
+                resetDelayTimer = undefined;
+                if (postCaller) {
+                    postCaller();
+                    postCaller = undefined;
+                } else callback?.(...args);
+            }, 3000);
+        } else callback?.(...args);
+
+        lastToken = newTruthy;
+    });
+
+    return () => {
+        postCaller = undefined;
+        listener?.();
+        clearTimeout(resetDelayTimer);
+    }
+}
 
 export const initTokenRefresher = async ({ config, forceRefresh, justCheck }) => {
     const { projectUrl, maxRetries } = config;
@@ -168,7 +204,7 @@ export const getEmulatedLinks = (projectUrl) =>
         .filter(([_, v]) => v === projectUrl)
         .map(v => v[0]);
 
-const refreshToken = (builder, remainRetries = 1, isForceRefresh) =>
+const refreshToken = (builder, remainRetries = 3) =>
     new Promise(async (resolve, reject) => {
         const { projectUrl, serverE2E_PublicKey, uglify, extraHeaders } = builder;
 
@@ -206,7 +242,7 @@ const refreshToken = (builder, remainRetries = 1, isForceRefresh) =>
                 Scoped.AuthJWTToken[v] = f.result.token;
 
                 triggerAuthToken(v, isInit);
-                if (isForceRefresh) Scoped.InitiatedForcedToken[v] = true;
+                if (isInit) Scoped.InitiatedForcedToken[v] = true;
             });
             updateCacheStore(['AuthStore']);
             initTokenRefresher({ config: builder });
@@ -222,7 +258,7 @@ const refreshToken = (builder, remainRetries = 1, isForceRefresh) =>
                 console.error(`refreshToken retry limit exceeded err:`, e);
             } else {
                 awaitReachableServer(projectUrl, true).then(() => {
-                    refreshToken(builder, remainRetries - 1, isForceRefresh).then(resolve, reject);
+                    refreshToken(builder, remainRetries - 1).then(resolve, reject);
                 });
             }
         }
