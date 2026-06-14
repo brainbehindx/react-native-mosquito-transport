@@ -182,6 +182,8 @@ interface CustomSocketOption extends OveridenProjectUrl {
 export default class RNMT {
     constructor(config: RNMTConfig);
     static initializeCache(option?: ReleaseCacheOption): void;
+    get isOnline(): boolean | undefined;
+    areYouOnline(): Promise<boolean>;
     getDatabase(dbName?: string, dbUrl?: string): GetDatabase;
     collection(path: string): RNMTCollection;
     auth(): RNMTAuth;

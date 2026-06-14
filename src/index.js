@@ -142,6 +142,14 @@ class RNMT {
         });
     }
 
+    get isOnline() {
+        return Scoped.IS_CONNECTED[this.config.projectUrl];
+    }
+
+    areYouOnline() {
+        return checkAreYouOk(this.config.projectUrl);
+    }
+
     getDatabase = (dbName, dbUrl) => {
         if (dbName) ConfigValidator.dbName(dbName);
         if (dbUrl) ConfigValidator.dbUrl(dbUrl);
@@ -467,11 +475,10 @@ class RNMT {
                 clearForegroundListener();
                 clearSocket();
                 socketListenerList = [];
-                if (!socketReadyCallback) {
-                    makeSocketCallback();
+                if (socketReadyCallback) {
+                    socketReadyCallback[1]('socket already disconnected');
+                    socketReadyCallback = undefined;
                 }
-                socketReadyCallback[1]('socket already disconnected');
-                socketReadyCallback = undefined;
             }
         };
 

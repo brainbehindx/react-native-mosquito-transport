@@ -728,10 +728,15 @@ const findObject = async (builder, initConfig) => {
             } else if (retries > maxRetries) {
                 finalize(undefined, { error: 'retry_limit_exceeded', message: `retry exceed limit(${maxRetries})` });
             } else {
-                awaitReachableServer(projectUrl, true).then(() => {
+                awaitReachableServer(projectUrl, true).then(async () => {
                     if (intruder) {
                         intruder.resolve = undefined;
                         intruder.reject = undefined;
+
+                        if (Scoped.dispatchingWritesPromise[projectUrl]) {
+                            await Scoped.dispatchingWritesPromise[projectUrl];
+                        }
+
                         readValue().then(
                             e => { finalize(e); },
                             e => { finalize(undefined, e); }
@@ -880,8 +885,9 @@ const commitData = async (builder, value, type, config) => {
                             e => { finalize(undefined, e.b, e.c); }
                         );
                     });
-                } else if (shouldCache) finalize({ status: 'queued' });
-                else finalize(undefined, simplifyCaughtError(e).simpleError);
+                } else if (shouldCache) {
+                    finalize({ status: 'queued' });
+                } else finalize(undefined, simplifyCaughtError(e).simpleError);
             }
         }
     });
