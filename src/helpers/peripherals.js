@@ -103,3 +103,5 @@ export const deserializeE2E = async (data, serverPublicKey, clientPrivateKey) =>
 
 export const encodeBinary = (s) => Buffer.from(s, 'utf8').toString('base64');
 export const decodeBinary = (s) => Buffer.from(s, 'base64').toString('utf8');
+
+export const parseToken = (token) => JSON.parse(decodeBinary(token.split('.')[1]));

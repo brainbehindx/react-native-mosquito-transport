@@ -1,9 +1,9 @@
 import { Buffer } from "buffer";
-import { deserializeE2E, niceHash, normalizeRoute, serializeE2E } from "../../helpers/peripherals";
+import { deserializeE2E, niceHash, normalizeRoute, parseToken, serializeE2E } from "../../helpers/peripherals";
 import { awaitReachableServer, awaitStore } from "../../helpers/utils";
 import { RETRIEVAL } from "../../helpers/values";
 import { Scoped } from "../../helpers/variables";
-import { ensureActiveToken, parseToken } from "../auth/accessor";
+import { ensureActiveToken } from "../auth/accessor";
 import { simplifyCaughtError } from "simplify-error";
 import { guardObject, Validator } from "guard-object";
 import { serialize } from "entity-serializer";

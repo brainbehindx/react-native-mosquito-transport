@@ -1,9 +1,9 @@
 import { io } from "socket.io-client";
 import EngineApi from "../../helpers/engine_api";
-import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, updateCacheStore } from "../../helpers/utils";
+import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, updateAuthData, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
-import { awaitRefreshToken, getEmulatedLinks, initTokenRefresher, injectEmulatedAuth, injectFreshToken, listenToken, parseToken, triggerAuthToken } from "./accessor";
-import { deserializeE2E, encodeBinary, serializeE2E } from "../../helpers/peripherals";
+import { awaitRefreshToken, getEmulatedLinks, initTokenRefresher, injectEmulatedAuth, injectFreshToken, listenToken, triggerAuthToken } from "./accessor";
+import { deserializeE2E, encodeBinary, parseToken, serializeE2E } from "../../helpers/peripherals";
 import { simplifyCaughtError, simplifyError } from "simplify-error";
 import { basicClone } from "../../helpers/basic_clone";
 
@@ -112,8 +112,6 @@ export default class MTAuth {
         const { refreshToken } = CacheStore.AuthStore[this.builder.projectUrl] || {};
         return refreshToken && parseToken(refreshToken);
     }
-
-    parseToken = (token) => parseToken(token);
 
     getAuthToken = () => new Promise(resolve => {
         const l = listenToken(t => {
@@ -234,7 +232,7 @@ const doCustomSignup = (builder, email, password, name, metadata) => new Promise
 });
 
 const purgeCache = (url, isMain) => {
-    if (url in Scoped.AuthJWTToken) delete Scoped.AuthJWTToken[url];
+    updateAuthData(url);
     [
         isMain ? 'EmulatedAuth' : undefined,
         'AuthStore',

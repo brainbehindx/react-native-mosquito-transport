@@ -8,6 +8,7 @@ export const Scoped = {
     InitializedProject: {},
     ReleaseCacheData: undefined,
     AuthJWTToken: {},
+    AuthData: {},
     IsStoreReady: false,
     TokenRefreshTimer: {},
     TokenRefreshProcess: {},

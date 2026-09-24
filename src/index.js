@@ -1,5 +1,5 @@
 import 'react-native-get-random-values';
-import { deserializeE2E, serializeE2E } from "./helpers/peripherals";
+import { deserializeE2E, parseToken, serializeE2E } from "./helpers/peripherals";
 import { awaitReachableServer, awaitStore, checkAreYouOk, listenReachableServer, releaseCacheStore } from "./helpers/utils";
 import { CacheStore, Scoped } from "./helpers/variables";
 import { MTCollection, batchWrite, onCollectionConnect, trySendPendingWrite } from "./products/database";
@@ -144,6 +144,10 @@ class RNMT {
 
     get isOnline() {
         return Scoped.IS_CONNECTED[this.config.projectUrl];
+    }
+
+    get user() {
+        return Scoped.AuthData[this.config.projectUrl];
     }
 
     areYouOnline() {
@@ -609,6 +613,7 @@ export {
     DOCUMENT_EXTRACTION,
     FIND_GEO_JSON,
     GEO_JSON,
+    parseToken,
     AUTH_PROVIDER_ID,
     BSON
 };

@@ -1,8 +1,8 @@
 import { doSignOut, revokeAuthIntance } from "./index.js";
 import EngineApi from "../../helpers/engine_api";
 import { AuthTokenListener, TokenRefreshListener } from "../../helpers/listeners";
-import { decodeBinary, deserializeE2E } from "../../helpers/peripherals";
-import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, getReachableServer, updateCacheStore } from "../../helpers/utils";
+import { deserializeE2E, parseToken } from "../../helpers/peripherals";
+import { awaitReachableServer, awaitStore, buildFetchInterface, buildFetchResult, getReachableServer, updateAuthData, updateCacheStore } from "../../helpers/utils";
 import { CacheStore, Scoped } from "../../helpers/variables";
 import { simplifyError } from "simplify-error";
 import { Validator } from "guard-object";
@@ -19,7 +19,7 @@ export const injectFreshToken = async (config, { token, refreshToken }) => {
     const { projectUrl } = config;
 
     CacheStore.AuthStore[projectUrl] = { token, refreshToken };
-    Scoped.AuthJWTToken[projectUrl] = token;
+    updateAuthData(projectUrl, token);
     const isEmulated = projectUrl in CacheStore.EmulatedAuth;
     if (isEmulated) delete CacheStore.EmulatedAuth[projectUrl];
     await updateTokenTimestamp(projectUrl, token);
@@ -45,15 +45,13 @@ export const injectEmulatedAuth = async (config, emulatedURL) => {
     revokeAuthIntance(config, thisAuthStore);
 
     CacheStore.AuthStore[projectUrl] = basicClone(CacheStore.AuthStore[emulatedURL]);
-    Scoped.AuthJWTToken[projectUrl] = token;
+    updateAuthData(projectUrl, token);
     CacheStore.EmulatedAuth[projectUrl] = emulatedURL;
 
     updateCacheStore(['AuthStore', 'EmulatedAuth']);
     triggerAuthToken(projectUrl);
     initTokenRefresher({ config });
 };
-
-export const parseToken = (token) => JSON.parse(decodeBinary(token.split('.')[1]));
 
 export const triggerAuthToken = async (projectUrl, isInit) => {
     if (!Scoped.IsStoreReady) await awaitStore();
@@ -228,7 +226,7 @@ const refreshToken = (builder, remainRetries = 3) =>
             }
 
             CacheStore.AuthStore[projectUrl].token = f.result.token;
-            Scoped.AuthJWTToken[projectUrl] = f.result.token;
+            updateAuthData(projectUrl, f.result.token);
             await updateTokenTimestamp(projectUrl, f.result.token);
 
             resolve(f.result.token);
@@ -239,7 +237,7 @@ const refreshToken = (builder, remainRetries = 3) =>
 
             getEmulatedLinks(projectUrl).forEach(v => {
                 CacheStore.AuthStore[v] = basicClone(CacheStore.AuthStore[projectUrl]);
-                Scoped.AuthJWTToken[v] = f.result.token;
+                updateAuthData(v, f.result.token);
 
                 triggerAuthToken(v, isInit);
                 if (isInit) Scoped.InitiatedForcedToken[v] = true;
