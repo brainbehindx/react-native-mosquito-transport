@@ -11,6 +11,7 @@ import { circle } from '@turf/circle';
 import { distance } from '@turf/distance';
 import { point, polygon } from "@turf/helpers";
 import { grab } from "poke-object";
+import * as queryOperators from "mingo/operators/query";
 
 const COORDINATE_GUARD = [
     GuardSignal.COORDINATE.LONGITUDE_INT,
@@ -333,7 +334,9 @@ const $text = (_, args) => {
 }
 
 const context =
-    Context.init().addQueryOps({
+    Context.init({
+        query: { ...queryOperators }
+    }).addQueryOps({
         $geoWithin,
         $geoIntersects,
         $near,
@@ -378,8 +381,4 @@ export function toExtendedJSON(o) {
     if (typeof o?.toJSON === 'function') return o?.toJSON();
 
     return o;
-}
-
-export function isEqualId(a, b) {
-    return testDocument([{ _id: a }], { _id: b });
 }
